@@ -5,10 +5,13 @@
 #
 # What it installs:
 #   • Homebrew                (if missing)
-#   • swiftly                 (Swift toolchain manager — alongside Xcode)
-#   • Swift 6.2.0             (mur's Package.swift requires it; Xcode 15 ships 5.10)
+#   • Swift 6.2 toolchain     (.pkg from swift.org → ~/Library/Developer/Toolchains/)
 #   • xcbeautify              (prettier xcodebuild output — optional)
 #   • bundler                 (Ruby gem; only needed for `build-release.sh` docs)
+#
+# We do NOT use swiftly: version 1.1.1 has a malloc abort
+# ("freed pointer was not the last allocation") on macOS 14, so any
+# subcommand crashes. Direct toolchain install bypasses it.
 #
 # What it does NOT do:
 #   • Touch your system Xcode. Swift 6.2 lives in ~/.local/share/swiftly/.
@@ -44,7 +47,12 @@ while test $# -gt 0; do
     esac
 done
 
-REQUIRED_SWIFT="6.2.0"
+REQUIRED_SWIFT="6.2"
+SWIFT_TOOLCHAIN_NAME="swift-${REQUIRED_SWIFT}-RELEASE"
+SWIFT_PKG_URL="https://download.swift.org/swift-${REQUIRED_SWIFT}-release/xcode/${SWIFT_TOOLCHAIN_NAME}/${SWIFT_TOOLCHAIN_NAME}-osx.pkg"
+SWIFT_TOOLCHAIN_DIR="$HOME/Library/Developer/Toolchains/${SWIFT_TOOLCHAIN_NAME}.xctoolchain"
+MUR_DIR="$(cd "$(dirname "$0")" && pwd)"
+SWIFT_ENV_FILE="$MUR_DIR/.swift-env.sh"
 GREEN='\033[0;32m'; YELLOW='\033[0;33m'; RED='\033[0;31m'; RESET='\033[0m'
 say()  { printf "${GREEN}==>${RESET} %s\n" "$*"; }
 warn() { printf "${YELLOW}!! ${RESET} %s\n" "$*" >&2; }
@@ -63,16 +71,13 @@ fi
 need_brew=0
 if ! command -v brew >/dev/null 2>&1; then need_brew=1; fi
 
-# --- swiftly -------------------------------------------------------------
-need_swiftly=0
-if ! command -v swiftly >/dev/null 2>&1 && ! [[ -x "$HOME/.local/share/swiftly/bin/swiftly" ]]; then
-    need_swiftly=1
-fi
-
-# --- Swift 6.2 (via swiftly if present) ---------------------------------
+# --- Swift 6.2 toolchain (direct .pkg, no swiftly) ----------------------
 need_swift=1
-if command -v swiftly >/dev/null 2>&1; then
-    if swiftly list 2>/dev/null | grep -q "$REQUIRED_SWIFT"; then need_swift=0; fi
+if [[ -x "$SWIFT_TOOLCHAIN_DIR/usr/bin/swift" ]]; then
+    installed_ver="$("$SWIFT_TOOLCHAIN_DIR/usr/bin/swift" --version 2>&1 | head -1)"
+    if echo "$installed_ver" | grep -q "Swift version $REQUIRED_SWIFT"; then
+        need_swift=0
+    fi
 fi
 
 # --- xcbeautify, bundler (optional) -------------------------------------
@@ -83,16 +88,15 @@ if ! command -v bundle >/dev/null 2>&1; then need_bundler=1; fi
 
 # --- Report --------------------------------------------------------------
 echo "Dependency check:"
-printf "  Homebrew    : %s\n" "$([[ $need_brew      -eq 0 ]] && echo "OK" || echo "MISSING")"
-printf "  swiftly     : %s\n" "$([[ $need_swiftly   -eq 0 ]] && echo "OK" || echo "MISSING")"
-printf "  Swift %s : %s\n" "$REQUIRED_SWIFT" "$([[ $need_swift -eq 0 ]] && echo "OK" || echo "MISSING")"
-printf "  xcbeautify  : %s\n" "$([[ $need_xcbeautify -eq 0 ]] && echo "OK" || echo "missing (optional)")"
-printf "  bundler     : %s\n" "$([[ $need_bundler   -eq 0 ]] && echo "OK" || echo "missing (optional, release-only)")"
+printf "  Homebrew      : %s\n" "$([[ $need_brew      -eq 0 ]] && echo "OK" || echo "MISSING")"
+printf "  Swift %-7s : %s\n" "$REQUIRED_SWIFT" "$([[ $need_swift -eq 0 ]] && echo "OK ($SWIFT_TOOLCHAIN_DIR)" || echo "MISSING")"
+printf "  xcbeautify    : %s\n" "$([[ $need_xcbeautify -eq 0 ]] && echo "OK" || echo "missing (optional)")"
+printf "  bundler       : %s\n" "$([[ $need_bundler   -eq 0 ]] && echo "OK" || echo "missing (optional, release-only)")"
 echo
 
 if [[ "$mode" == "check" ]]; then
-    if [[ $need_brew -eq 0 && $need_swiftly -eq 0 && $need_swift -eq 0 ]]; then
-        say "All required deps present. Run ./build-debug.sh"
+    if [[ $need_brew -eq 0 && $need_swift -eq 0 ]]; then
+        say "All required deps present. Run: source $SWIFT_ENV_FILE && ./build-debug.sh"
     else
         warn "Missing required deps. Re-run without --check to install."
     fi
@@ -112,28 +116,45 @@ if [[ $need_brew -eq 1 ]]; then
 fi
 
 # --- Install: swiftly ---------------------------------------------------
-if [[ $need_swiftly -eq 1 ]]; then
-    say "Installing swiftly (Swift toolchain manager)..."
-    # Non-interactive install. swiftly's installer respects SWIFTLY_HOME_DIR
-    # and reads -y for unattended.
-    curl -L -o /tmp/swiftly-install.sh https://swiftlang.github.io/swiftly/swiftly-install.sh
-    chmod +x /tmp/swiftly-install.sh
-    /tmp/swiftly-install.sh -y --no-modify-profile
-fi
-# Source swiftly env for this shell.
-if [[ -f "$HOME/.local/share/swiftly/env.sh" ]]; then
-    # shellcheck disable=SC1091
-    . "$HOME/.local/share/swiftly/env.sh"
-fi
-command -v swiftly >/dev/null 2>&1 || fail "swiftly not on PATH after install. Open a new shell and re-run."
-
-# --- Install: Swift 6.2 -------------------------------------------------
+# macOS install path is the signed .pkg from swift.org. The bash installer
+# (swiftly-install.sh) requires GNU getopt from util-linux which is
+# Linux-only — using it on macOS fails with:
+#   "Error: getopt must be installed from the util-linux package"
+# --- Install: Swift 6.2 toolchain (direct .pkg from swift.org) ---------
 if [[ $need_swift -eq 1 ]]; then
-    say "Installing Swift $REQUIRED_SWIFT (download ~600 MB, takes 3–5 min)..."
-    swiftly install --use "$REQUIRED_SWIFT"
+    say "Downloading Swift $REQUIRED_SWIFT toolchain (~700 MB, 1–3 min)..."
+    pkg_path="/tmp/${SWIFT_TOOLCHAIN_NAME}-osx.pkg"
+    if [[ ! -f "$pkg_path" ]] || [[ $(stat -f%z "$pkg_path") -lt 100000000 ]]; then
+        curl -fL -o "$pkg_path" "$SWIFT_PKG_URL" \
+            || fail "Failed to download $SWIFT_PKG_URL"
+    else
+        say "Reusing cached $pkg_path"
+    fi
+    say "Installing toolchain to ~/Library/Developer/Toolchains/ (no sudo)..."
+    installer -pkg "$pkg_path" -target CurrentUserHomeDirectory \
+        || fail "Toolchain installer failed"
+    [[ -x "$SWIFT_TOOLCHAIN_DIR/usr/bin/swift" ]] \
+        || fail "Toolchain swift binary not found at $SWIFT_TOOLCHAIN_DIR/usr/bin/swift"
 fi
-swiftly use "$REQUIRED_SWIFT" >/dev/null
-say "Swift toolchain: $(swiftly run swift --version | head -1)"
+say "Swift toolchain: $("$SWIFT_TOOLCHAIN_DIR/usr/bin/swift" --version | head -1)"
+
+# --- Write env file the user sources before building -------------------
+cat > "$SWIFT_ENV_FILE" <<EOF
+# Source this before running ./build-debug.sh, ./swift-test.sh, etc.
+# Generated by bootstrap.sh — re-runs of bootstrap.sh overwrite this file.
+export PATH="$SWIFT_TOOLCHAIN_DIR/usr/bin:\$PATH"
+export TOOLCHAINS="${SWIFT_TOOLCHAIN_NAME}"
+EOF
+say "Wrote $SWIFT_ENV_FILE — source it before building."
+
+# --- If a broken swiftly install is lingering, warn ---------------------
+if [[ -d "$HOME/.swiftly" ]] && [[ -x "$HOME/.swiftly/bin/swiftly" ]]; then
+    warn "Detected leftover ~/.swiftly from a previous attempt."
+    warn "  setup.sh routes through swiftly if it's on PATH — and swiftly"
+    warn "  1.1.1 crashes on macOS 14 (malloc abort). Remove with:"
+    warn "    rm -rf ~/.swiftly"
+    warn "  and ensure no shell rc file sources ~/.swiftly/env.sh."
+fi
 
 # --- Install: optional extras (skip in --minimal) -----------------------
 if [[ "$mode" != "minimal" ]]; then
@@ -155,7 +176,7 @@ cat <<EOF
 Next steps:
 
   cd $(pwd)
-  source ~/.local/share/swiftly/env.sh   # add to ~/.zshrc to persist
+  source $SWIFT_ENV_FILE   # adds Swift 6.2 toolchain to PATH for this shell
   ./build-debug.sh                       # ~1-2 min — compiles AeroSpace+CLI
   ./swift-test.sh                        # runs unit tests including
                                          # GridLayoutTest, GridResizeTest
