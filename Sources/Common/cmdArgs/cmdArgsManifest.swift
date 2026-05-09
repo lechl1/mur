@@ -15,13 +15,13 @@ public enum CmdKind: String, CaseIterable, Equatable, Sendable {
     case focusBackAndForth = "focus-back-and-forth"
     case focusMonitor = "focus-monitor"
     case fullscreen
-    case gridFloat = "grid-float"          // mur — phase 2
-    case gridFocus = "grid-focus"          // mur — phase 2
-    case gridFocusDir = "grid-focus-dir"   // mur — phase 2
-    case gridInfo = "grid-info"            // mur — phase 2
-    case gridMove = "grid-move"   // mur — phase 2
-    case gridPlace = "grid-place" // mur — phase 2
-    case gridSwap = "grid-swap"   // mur — phase 2
+    case stackingFloat = "stacking-float"          // mur — phase 2
+    case stackingFocus = "stacking-focus"          // mur — phase 2
+    case stackingFocusDir = "stacking-focus-dir"   // mur — phase 2
+    case stackingInfo = "stacking-info"            // mur — phase 2
+    case stackingMove = "stacking-move"     // mur — phase 2
+    case stackingPlace = "stacking-place"   // mur — phase 2
+    case stackingResize = "stacking-resize" // mur — phase 2
     case joinWith = "join-with"
     case layout
     case listApps = "list-apps"
@@ -83,20 +83,20 @@ func initSubcommands() -> [String: any SubCommandParserProtocol] {
                 result[kind.rawValue] = SubCommandParser(parseFocusMonitorCmdArgs)
             case .fullscreen:
                 result[kind.rawValue] = SubCommandParser(parseFullscreenCmdArgs)
-            case .gridFloat:
-                result[kind.rawValue] = SubCommandParser(GridFloatCmdArgs.init)
-            case .gridFocus:
-                result[kind.rawValue] = SubCommandParser(parseGridFocusCmdArgs)
-            case .gridFocusDir:
-                result[kind.rawValue] = SubCommandParser(GridFocusDirCmdArgs.init)
-            case .gridInfo:
-                result[kind.rawValue] = SubCommandParser(GridInfoCmdArgs.init)
-            case .gridMove:
-                result[kind.rawValue] = SubCommandParser(GridMoveCmdArgs.init)
-            case .gridPlace:
-                result[kind.rawValue] = SubCommandParser(parseGridPlaceCmdArgs)
-            case .gridSwap:
-                result[kind.rawValue] = SubCommandParser(GridSwapCmdArgs.init)
+            case .stackingFloat:
+                result[kind.rawValue] = SubCommandParser(StackingFloatCmdArgs.init)
+            case .stackingFocus:
+                result[kind.rawValue] = SubCommandParser(parseStackingFocusCmdArgs)
+            case .stackingFocusDir:
+                result[kind.rawValue] = SubCommandParser(StackingFocusDirCmdArgs.init)
+            case .stackingInfo:
+                result[kind.rawValue] = SubCommandParser(StackingInfoCmdArgs.init)
+            case .stackingMove:
+                result[kind.rawValue] = SubCommandParser(StackingMoveCmdArgs.init)
+            case .stackingPlace:
+                result[kind.rawValue] = SubCommandParser(parseStackingPlaceCmdArgs)
+            case .stackingResize:
+                result[kind.rawValue] = SubCommandParser(StackingResizeCmdArgs.init)
             case .joinWith:
                 result[kind.rawValue] = SubCommandParser(JoinWithCmdArgs.init)
             case .layout:

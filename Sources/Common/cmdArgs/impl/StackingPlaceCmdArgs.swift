@@ -2,21 +2,21 @@
 // --window-id) window at an explicit (lane, slot0..slot1) span.
 // Useful for scripting and as a key binding ("send this window to the
 // right lane bottom slot").
-public struct GridPlaceCmdArgs: CmdArgs {
+public struct StackingPlaceCmdArgs: CmdArgs {
     /*conforms*/ public var commonState: CmdArgsCommonState
     fileprivate init(rawArgs: StrArrSlice) { self.commonState = .init(rawArgs) }
     public static let parser: CmdParser<Self> = .init(
-        kind: .gridPlace,
+        kind: .stackingPlace,
         allowInConfig: true,
-        help: grid_place_help_generated,
+        help: stacking_place_help_generated,
         flags: [
             "--window-id": windowIdSubArgParser(),
             "--workspace": workspaceSubArgParser(),
         ],
         posArgs: [
-            newMandatoryPosArgParser(\.lane,  parseGridIndex, placeholder: "<lane>"),
-            newMandatoryPosArgParser(\.slot0, parseGridIndex, placeholder: "<slot0>"),
-            newMandatoryPosArgParser(\.slot1, parseGridIndex, placeholder: "<slot1>"),
+            newMandatoryPosArgParser(\.lane,  parseStackingIndex, placeholder: "<lane>"),
+            newMandatoryPosArgParser(\.slot0, parseStackingIndex, placeholder: "<slot0>"),
+            newMandatoryPosArgParser(\.slot1, parseStackingIndex, placeholder: "<slot1>"),
         ],
     )
 
@@ -32,11 +32,11 @@ public struct GridPlaceCmdArgs: CmdArgs {
     }
 }
 
-public func parseGridPlaceCmdArgs(_ args: StrArrSlice) -> ParsedCmd<GridPlaceCmdArgs> {
-    parseSpecificCmdArgs(GridPlaceCmdArgs(rawArgs: args), args)
+public func parseStackingPlaceCmdArgs(_ args: StrArrSlice) -> ParsedCmd<StackingPlaceCmdArgs> {
+    parseSpecificCmdArgs(StackingPlaceCmdArgs(rawArgs: args), args)
 }
 
-private func parseGridIndex(i: PosArgParserInput) -> ParsedCliArgs<Int> {
+private func parseStackingIndex(i: PosArgParserInput) -> ParsedCliArgs<Int> {
     if let n = Int(i.arg), n >= 0 {
         return .succ(n, advanceBy: 1)
     }

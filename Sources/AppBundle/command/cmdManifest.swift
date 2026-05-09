@@ -32,20 +32,20 @@ extension CmdArgs {
                 command = FocusMonitorCommand(args: self as! FocusMonitorCmdArgs)
             case .fullscreen:
                 command = FullscreenCommand(args: self as! FullscreenCmdArgs)
-            case .gridFloat:
-                command = GridFloatCommand(args: self as! GridFloatCmdArgs)
-            case .gridFocus:
-                command = GridFocusCommand(args: self as! GridFocusCmdArgs)
-            case .gridFocusDir:
-                command = GridFocusDirCommand(args: self as! GridFocusDirCmdArgs)
-            case .gridInfo:
-                command = GridInfoCommand(args: self as! GridInfoCmdArgs)
-            case .gridMove:
-                command = GridMoveCommand(args: self as! GridMoveCmdArgs)
-            case .gridPlace:
-                command = GridPlaceCommand(args: self as! GridPlaceCmdArgs)
-            case .gridSwap:
-                command = GridSwapCommand(args: self as! GridSwapCmdArgs)
+            case .stackingFloat:
+                command = StackingFloatCommand(args: self as! StackingFloatCmdArgs)
+            case .stackingFocus:
+                command = StackingFocusCommand(args: self as! StackingFocusCmdArgs)
+            case .stackingFocusDir:
+                command = StackingFocusDirCommand(args: self as! StackingFocusDirCmdArgs)
+            case .stackingInfo:
+                command = StackingInfoCommand(args: self as! StackingInfoCmdArgs)
+            case .stackingMove:
+                command = StackingMoveCommand(args: self as! StackingMoveCmdArgs)
+            case .stackingPlace:
+                command = StackingPlaceCommand(args: self as! StackingPlaceCmdArgs)
+            case .stackingResize:
+                command = StackingResizeCommand(args: self as! StackingResizeCmdArgs)
             case .joinWith:
                 command = JoinWithCommand(args: self as! JoinWithCmdArgs)
             case .layout:

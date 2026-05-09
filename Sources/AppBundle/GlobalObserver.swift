@@ -68,7 +68,7 @@ enum GlobalObserver {
                             lane0: cell.lane, lane1: cell.lane,
                             slot0: cell.slot, slot1: cell.slot,
                         )
-                        session.workspace.gridLayout.place(session.windowId, at: target)
+                        session.workspace.stackingLayout.place(session.windowId, at: target)
                     }
                 }
                 try await resetManipulatedWithMouseIfPossible()

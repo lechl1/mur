@@ -8,7 +8,7 @@ import Common
 @MainActor let windowMemory = WindowMemory()
 
 /// App bundle IDs whose windows we've previously observed as
-/// non-resizable (the auto-float branch in `layoutWorkspaceWithGrid`
+/// non-resizable (the auto-float branch in `layoutWorkspaceWithStacking`
 /// sets this). New windows of these apps skip grid registration on
 /// open and stay floating, so we never see the brief in-grid flash
 /// before the float kicks in. In-memory only — apps not seen yet
@@ -19,25 +19,25 @@ import Common
 ///
 /// Called from `MacWindow.getOrRegister` after the window has been bound
 /// into the tree. When the experimental grid is on, register the window
-/// in its workspace's `GridLayout` too:
+/// in its workspace's `StackingLayout` too:
 ///
 /// 1. Skip non-managed windows (popups, native fullscreen / minimised /
 ///    hidden — those keep AeroSpace's existing handling).
 /// 2. Recall a previous span via `WindowMemory.recall(appId, title)`.
 ///    Hit → reuse it (clamped to current shape).
 /// 3. Miss → run `placementForNewWindow(focusedLane:)` heuristic.
-/// 4. `gridLayout.place(...)` and persist via `WindowMemory.remember`.
+/// 4. `stackingLayout.place(...)` and persist via `WindowMemory.remember`.
 ///
 /// The window remains bound in the tree as well; that's intentional for
 /// phase 1 — `layoutWorkspace` dispatches through grid first when
-/// `gridLayout.isEmpty == false`. The tree binding becomes dormant until
+/// `stackingLayout.isEmpty == false`. The tree binding becomes dormant until
 /// phase 3 deletes it.
 @MainActor
-func tryRegisterInGridLayout(_ window: Window) {
-    guard config.experimentalGridLayout else { return }
+func tryRegisterInStackingLayout(_ window: Window) {
+    guard config.experimentalStackingLayout else { return }
     guard let workspace = window.nodeWorkspace else { return }
 
-    // Don't grid-place macOS-managed special windows. They keep AeroSpace's
+    // Don't stacking-place macOS-managed special windows. They keep AeroSpace's
     // existing handling via the shim containers.
     switch window.parent?.cases {
         case .macosPopupWindowsContainer,
@@ -56,20 +56,20 @@ func tryRegisterInGridLayout(_ window: Window) {
     // call we make here can block the entire daemon if a single app's
     // AX is unresponsive. So this function is strictly sync — no
     // `await`, no AX reads beyond what `window.app.rawAppBundleId`
-    // (cached) and `gridLayout.placements` (in-memory) need.
+    // (cached) and `stackingLayout.placements` (in-memory) need.
     //
     // Consequence: WindowMemory is keyed by (appId, "") at registration
     // time — per-app memory, not per-window-title. Title precision is
-    // restored when the user explicitly places via `mur grid-place` /
-    // `mur grid-move`, which run outside the startup hot path and
-    // can safely await window.title there.
+    // restored when the user explicitly places via `mur stacking-place`,
+    // `mur stacking-move`, or `mur stacking-resize`, which run outside the
+    // startup hot path and can safely await window.title there.
     let appId = window.app.rawAppBundleId ?? ""
     // Skip grid registration for apps we've previously observed as
     // non-resizable — they'd just be auto-floated milliseconds later
     // anyway. Leaving them as floating from the start avoids the
     // in-grid flash and a wasted setAxFrame round-trip.
     if !appId.isEmpty && knownNonResizableAppIds.contains(appId) { return }
-    let shape = workspace.gridLayout.shape
+    let shape = workspace.stackingLayout.shape
 
     let span: TileSpan
     if let recalled = windowMemory.recall(appId: appId, title: "", shape: shape) {
@@ -79,10 +79,10 @@ func tryRegisterInGridLayout(_ window: Window) {
         // any. Uses the cached `focus` (sync) instead of
         // getNativeFocusedWindow() (async + AX-bound).
         let focusedLane = focus.windowOrNil
-            .flatMap { workspace.gridLayout.placements[$0.windowId]?.lane0 }
-        span = workspace.gridLayout.placementForNewWindow(focusedLane: focusedLane)
+            .flatMap { workspace.stackingLayout.placements[$0.windowId]?.lane0 }
+        span = workspace.stackingLayout.placementForNewWindow(focusedLane: focusedLane)
         windowMemory.remember(appId: appId, title: "", shape: shape, span: span)
         windowMemory.save()
     }
-    workspace.gridLayout.place(window.windowId, at: span)
+    workspace.stackingLayout.place(window.windowId, at: span)
 }

@@ -19,7 +19,7 @@ enum LayoutOrientation: String, Hashable, Codable {
 // MARK: - LayoutShape
 
 /// Rigid-axis cardinality. The model has `lanes` rigid lanes; slot counts
-/// per lane are dynamic and derived from `GridLayout.placements`.
+/// per lane are dynamic and derived from `StackingLayout.placements`.
 struct LayoutShape: Equatable, Hashable, Codable {
     let orientation: LayoutOrientation
     let lanes: Int
@@ -44,8 +44,8 @@ struct LayoutShape: Equatable, Hashable, Codable {
 /// Naming is orientation-neutral: in landscape, lanes are columns and
 /// slots are rows; in portrait, lanes are rows and slots are columns.
 /// Single-lane spans (the common case) have `lane0 == lane1`. Multi-lane
-/// spans cover a contiguous run of lanes — used by `grid-move` to grow a
-/// window from 1 → 2 → 3 lanes as it moves toward an edge.
+/// spans cover a contiguous run of lanes — used by `stacking-resize` to
+/// grow a window from 1 → 2 → 3 lanes as it moves toward an edge.
 struct TileSpan: Equatable, Hashable {
     let lane0: Int
     let lane1: Int
@@ -85,13 +85,13 @@ struct TileSpan: Equatable, Hashable {
     var isSingleLane: Bool { lane0 == lane1 }
 }
 
-// MARK: - GridLayout
+// MARK: - StackingLayout
 
 typealias WindowId = UInt32
 
 /// Per-workspace layout. Rigid `lanes`; flexible per-lane slot counts and
 /// weights. Replaces AeroSpace's tree of `TilingContainer`s.
-final class GridLayout {
+final class StackingLayout {
     private(set) var shape: LayoutShape
 
     /// All tiled windows and their current span.
@@ -441,7 +441,7 @@ final class GridLayout {
 
     /// Insert a new lane at `idx`. Placements with `lane0 >= idx` shift
     /// right by 1; slot-weight keys and lane-weight entries shift to
-    /// match. Used by `grid-swap` for the "extract between source and
+    /// match. Used by `stacking-move` for the "extract between source and
     /// neighbour" step of the two-step inward move.
     func insertLane(at idx: Int) {
         guard idx >= 0, idx <= shape.lanes else { return }
@@ -475,7 +475,7 @@ final class GridLayout {
 
     /// Insert a new slot at `slotIdx` within `lane`. Placements in the
     /// lane at slots `>= slotIdx` shift down by 1; slot weights gain a
-    /// new 1.0 entry at `slotIdx`. Used by `grid-swap` when merging a
+    /// new 1.0 entry at `slotIdx`. Used by `stacking-move` when merging a
     /// dragged-in window between existing rows of the target column.
     func insertSlot(in lane: Int, at slotIdx: Int) {
         guard 0 <= lane, lane < shape.lanes, slotIdx >= 0 else { return }
@@ -499,7 +499,7 @@ final class GridLayout {
 
     /// Pick the OCCUPIED slot in `lane` whose centre is closest to
     /// `point`'s slot-axis coordinate (Y in landscape, X in portrait).
-    /// Used by `grid-swap`'s OVERLAP action to land focused on top of
+    /// Used by `stacking-move`'s OVERLAP action to land focused on top of
     /// the existing window the user is "aiming at" instead of always
     /// using slot 0. Returns nil when the lane is empty.
     func nearestOccupiedSlot(in lane: Int, to point: CGPoint, available: Rect, innerGap: CGFloat = 0) -> Int? {
@@ -535,7 +535,7 @@ final class GridLayout {
     }
 
     /// Pick the slot index in `lane` that best matches a vertical (or
-    /// horizontal in portrait) point. Used by `grid-swap` to decide
+    /// horizontal in portrait) point. Used by `stacking-move` to decide
     /// above-vs-below when a window merges into a target column.
     /// Returns `0..<slotCount(in: lane)` for "insert before slot N",
     /// or `slotCount(in: lane)` for "append at the end".
@@ -716,7 +716,7 @@ final class GridLayout {
 
 // MARK: - Geometry (orientation-aware)
 
-extension GridLayout {
+extension StackingLayout {
     /// Resolve a window's screen-space rect. `available` is post-outer-gap
     /// workspace rect; `innerGap` separates adjacent USED lanes and
     /// adjacent slots within a lane.
@@ -802,7 +802,7 @@ extension GridLayout {
 
 // MARK: - Hit testing
 
-extension GridLayout {
+extension StackingLayout {
     /// Find the (lane, slot) cell containing `point`, given the
     /// workspace's available rect. Used for drag-and-drop snap.
     /// Returns nil when the grid is empty.
@@ -858,17 +858,27 @@ extension GridLayout {
 
 // MARK: - Placement heuristic
 
-extension GridLayout {
+extension StackingLayout {
     /// Decide where a new window goes:
     ///   - empty workspace → lane 0, slot 0.
-    ///   - otherwise → stack as a new bottom row in the focused window's
-    ///     column. If there's no focused tiled window, stack in the
-    ///     rightmost used lane.
-    /// New columns are user-driven (`grid-place`, drag-and-drop, or the
-    /// extend-on-edge gesture) — never auto-created on window open.
+    ///   - exactly one used lane → split into a fresh lane (a new column
+    ///     in landscape, a new row in portrait) so we move from a single-
+    ///     stack layout into a side-by-side one.
+    ///   - 2+ used lanes → stack as a new bottom row in the focused
+    ///     window's column. If there's no focused tiled window, stack in
+    ///     the rightmost used lane.
+    /// Beyond the single-lane case, new columns stay user-driven
+    /// (`stacking-place`, drag-and-drop, or the extend-on-edge gesture).
     func placementForNewWindow(focusedLane: Int? = nil) -> TileSpan {
         let used = usedLanes
         if used.isEmpty { return .soleSlot(lane: 0) }
+        if used.count == 1 {
+            let onlyUsed = used[0]
+            let nextEmpty = onlyUsed + 1 < shape.lanes
+                ? onlyUsed + 1
+                : appendLane()
+            return .soleSlot(lane: nextEmpty)
+        }
         let targetLane = focusedLane ?? used.last!
         let newSlot = slotCount(in: targetLane)
         return .single(lane: targetLane, slot: newSlot)

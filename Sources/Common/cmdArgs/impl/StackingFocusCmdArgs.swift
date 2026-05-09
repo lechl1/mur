@@ -1,19 +1,19 @@
 // mur — phase 2 CLI command. Focus the topmost window at a given grid
 // coordinate. If multiple windows overlap that cell, the one highest
 // in zOrder wins.
-public struct GridFocusCmdArgs: CmdArgs {
+public struct StackingFocusCmdArgs: CmdArgs {
     /*conforms*/ public var commonState: CmdArgsCommonState
     fileprivate init(rawArgs: StrArrSlice) { self.commonState = .init(rawArgs) }
     public static let parser: CmdParser<Self> = .init(
-        kind: .gridFocus,
+        kind: .stackingFocus,
         allowInConfig: true,
-        help: grid_focus_help_generated,
+        help: stacking_focus_help_generated,
         flags: [
             "--workspace": workspaceSubArgParser(),
         ],
         posArgs: [
-            newMandatoryPosArgParser(\.lane, parseGridFocusIndex, placeholder: "<lane>"),
-            newMandatoryPosArgParser(\.slot, parseGridFocusIndex, placeholder: "<slot>"),
+            newMandatoryPosArgParser(\.lane, parseStackingFocusIndex, placeholder: "<lane>"),
+            newMandatoryPosArgParser(\.slot, parseStackingFocusIndex, placeholder: "<slot>"),
         ],
     )
 
@@ -27,11 +27,11 @@ public struct GridFocusCmdArgs: CmdArgs {
     }
 }
 
-public func parseGridFocusCmdArgs(_ args: StrArrSlice) -> ParsedCmd<GridFocusCmdArgs> {
-    parseSpecificCmdArgs(GridFocusCmdArgs(rawArgs: args), args)
+public func parseStackingFocusCmdArgs(_ args: StrArrSlice) -> ParsedCmd<StackingFocusCmdArgs> {
+    parseSpecificCmdArgs(StackingFocusCmdArgs(rawArgs: args), args)
 }
 
-private func parseGridFocusIndex(i: PosArgParserInput) -> ParsedCliArgs<Int> {
+private func parseStackingFocusIndex(i: PosArgParserInput) -> ParsedCliArgs<Int> {
     if let n = Int(i.arg), n >= 0 {
         return .succ(n, advanceBy: 1)
     }

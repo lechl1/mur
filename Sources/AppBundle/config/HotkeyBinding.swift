@@ -35,13 +35,14 @@ extension HotKey {
 @MainActor func activateMode(_ targetMode: String?) async throws {
     let targetBindings = targetMode.flatMap { config.modes[$0] }?.bindings ?? [:]
     for binding in targetBindings.values where !hotkeys.keys.contains(binding.descriptionWithKeyCode) {
-        // mur — grid-move (resize) and grid-swap (move) both auto-repeat
-        // on press-and-hold. grid-swap repeats are useful at the screen
-        // edge where the command falls through to the same resize logic
-        // as grid-move, and elsewhere they keep ramping the alternation
-        // / chained extract → shrink. Other commands fire once per press.
+        // mur — stacking-move (move) and stacking-resize (bloom resize) both
+        // auto-repeat on press-and-hold. stacking-move repeats are useful
+        // at the screen edge where the command falls through to the
+        // same resize logic as stacking-resize, and elsewhere they keep
+        // ramping the alternation / chained extract → shrink. Other
+        // commands fire once per press.
         let isRepeatable = binding.commands.contains {
-            $0 is GridMoveCommand || $0 is GridSwapCommand
+            $0 is StackingMoveCommand || $0 is StackingResizeCommand
         }
         let bindingKey = binding.descriptionWithKeyCode
         let fire: @MainActor () -> Void = {

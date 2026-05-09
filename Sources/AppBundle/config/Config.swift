@@ -64,7 +64,7 @@ struct Config: ConvenienceCopyable {
     /// mur phase 1 feature flag. Default false → behaves exactly like
     /// AeroSpace. When true, workspaces use the column-major grid layout
     /// (see docs/MUR_DESIGN.md) instead of the tree-based one.
-    var experimentalGridLayout: Bool = false
+    var experimentalStackingLayout: Bool = false
 }
 
 enum DefaultContainerOrientation: String {

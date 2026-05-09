@@ -2,7 +2,7 @@ import AppKit
 import Common
 import Foundation
 
-/// `mur grid-info` — print the grid layout state for the target workspace.
+/// `mur stacking-info` — print the grid layout state for the target workspace.
 ///
 /// Output (one workspace per invocation):
 ///
@@ -18,14 +18,14 @@ import Foundation
 ///
 /// `--workspace <name>` to inspect a specific workspace; otherwise the
 /// focused workspace.
-struct GridInfoCommand: Command {
-    let args: GridInfoCmdArgs
+struct StackingInfoCommand: Command {
+    let args: StackingInfoCmdArgs
     /*conforms*/ let shouldResetClosedWindowsCache = false
 
     func run(_ env: CmdEnv, _ io: CmdIo) -> BinaryExitCode {
         guard let target = args.resolveTargetOrReportError(env, io) else { return .fail }
         let workspace = target.workspace
-        let layout = workspace.gridLayout
+        let layout = workspace.stackingLayout
 
         io.out("workspace: \(workspace.name)")
         io.out("orientation: \(layout.shape.orientation.rawValue)")

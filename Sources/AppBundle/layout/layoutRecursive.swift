@@ -8,8 +8,8 @@ extension Workspace {
         // fall through to the existing tree-based layout. This means the
         // tree continues to drive layout for any pre-existing windows
         // that haven't been migrated into the grid yet.
-        if config.experimentalGridLayout && !gridLayout.isEmpty {
-            try await layoutWorkspaceWithGrid()
+        if config.experimentalStackingLayout && !stackingLayout.isEmpty {
+            try await layoutWorkspaceWithStacking()
             return
         }
         if isEffectivelyEmpty { return }
@@ -20,9 +20,9 @@ extension Workspace {
         try await layoutRecursive(rect.topLeftCorner, width: rect.width, height: rect.height - 1, virtual: rect, LayoutContext(self))
     }
 
-    /// mur — phase 1.3 grid-based layout dispatch.
+    /// mur — phase 1.3 stacking-based layout dispatch.
     ///
-    /// Walks `gridLayout.zOrder` back→front and `setAxFrame`s each tiled
+    /// Walks `stackingLayout.zOrder` back→front and `setAxFrame`s each tiled
     /// window to the rect resolved from its `TileSpan`. Floating windows
     /// (direct Window children of this Workspace) are then laid out by
     /// the existing path. The tree (`rootTilingContainer`) is dormant
@@ -30,22 +30,22 @@ extension Workspace {
     ///
     /// Z-order: setAxFrame doesn't control front-to-back ordering on its
     /// own; that's a focus/raise concern handled when a window is
-    /// promoted in `gridLayout`. This function only places geometry.
+    /// promoted in `stackingLayout`. This function only places geometry.
     @MainActor
-    fileprivate func layoutWorkspaceWithGrid() async throws {
+    fileprivate func layoutWorkspaceWithStacking() async throws {
         let context = LayoutContext(self)
         let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
         // Reshape if monitor orientation has changed since last layout.
         let mon = rect
         let nowOrientation = LayoutOrientation.forMonitor(width: mon.width, height: mon.height)
-        if nowOrientation != gridLayout.shape.orientation {
-            _ = gridLayout.reshape(to: LayoutShape(orientation: nowOrientation, lanes: gridLayout.shape.lanes))
+        if nowOrientation != stackingLayout.shape.orientation {
+            _ = stackingLayout.reshape(to: LayoutShape(orientation: nowOrientation, lanes: stackingLayout.shape.lanes))
         }
         // Single-axis inner gap for now (slot axis). Lane-axis gap is
         // a refinement for a later commit; in the meantime, slots and
         // lanes share the same gap for visual consistency.
         let slotGap = CGFloat(context.resolvedGaps.inner.get(
-            gridLayout.shape.orientation == .landscape ? .v : .h
+            stackingLayout.shape.orientation == .landscape ? .v : .h
         ))
 
         // mur — forced-resize pre-pass. Grow the lane / slot to fit
@@ -59,30 +59,30 @@ extension Workspace {
         //     portrait) within a column with neighbors, the focused
         //     slot still grows to its observed min and the neighbour
         //     slots shrink proportionally.
-        let isLandscape = gridLayout.shape.orientation == .landscape
-        for windowId in gridLayout.zOrder {
+        let isLandscape = stackingLayout.shape.orientation == .landscape
+        for windowId in stackingLayout.zOrder {
             guard Window.get(byId: windowId) != nil,
-                  let span = gridLayout.placements[windowId],
-                  let minSize = gridLayout.observedMinSizes[windowId] else { continue }
+                  let span = stackingLayout.placements[windowId],
+                  let minSize = stackingLayout.observedMinSizes[windowId] else { continue }
             if windowId == currentlyManipulatedWithMouseWindowId { continue }
-            let used = gridLayout.usedLanes
+            let used = stackingLayout.usedLanes
             let totalLaneGap = max(0, CGFloat(used.count - 1)) * slotGap
             let usableLanePx = (isLandscape ? rect.width : rect.height) - totalLaneGap
-            let slots = gridLayout.slotCount(in: span.lane0)
+            let slots = stackingLayout.slotCount(in: span.lane0)
             let totalSlotGap = max(0, CGFloat(slots - 1)) * slotGap
             let usableSlotPx = (isLandscape ? rect.height : rect.width) - totalSlotGap
             let minLanePx = isLandscape ? minSize.width : minSize.height
             let minSlotPx = isLandscape ? minSize.height : minSize.width
-            if gridLayout.windows(in: span.lane0).count == 1 {
-                _ = gridLayout.growLaneToFit(requiredPx: minLanePx, lane: span.lane0, totalUsablePx: usableLanePx)
+            if stackingLayout.windows(in: span.lane0).count == 1 {
+                _ = stackingLayout.growLaneToFit(requiredPx: minLanePx, lane: span.lane0, totalUsablePx: usableLanePx)
             }
-            _ = gridLayout.growSlotToFit(requiredPx: minSlotPx, lane: span.lane0, slot: span.slot0, totalUsablePx: usableSlotPx)
+            _ = stackingLayout.growSlotToFit(requiredPx: minSlotPx, lane: span.lane0, slot: span.slot0, totalUsablePx: usableSlotPx)
         }
 
-        for windowId in gridLayout.zOrder {
+        for windowId in stackingLayout.zOrder {
             guard let window = Window.get(byId: windowId) else { continue }
             if window.windowId == currentlyManipulatedWithMouseWindowId { continue }
-            guard let r = gridLayout.resolveRect(for: windowId, in: rect, innerGap: slotGap) else { continue }
+            guard let r = stackingLayout.resolveRect(for: windowId, in: rect, innerGap: slotGap) else { continue }
             window.lastAppliedLayoutPhysicalRect = r
             window.lastAppliedLayoutVirtualRect = r
             window.setAxFrame(r.topLeftCorner, r.size)
@@ -93,8 +93,8 @@ extension Workspace {
             // by more than 150px, the app has a fixed window size we
             // can't tile — float it. Threshold accommodates min-size
             // constraints that narrow ONE dimension only.
-            if !gridLayout.verifiedResizableWindows.contains(windowId)
-                && !gridLayout.nonResizableWindows.contains(windowId)
+            if !stackingLayout.verifiedResizableWindows.contains(windowId)
+                && !stackingLayout.nonResizableWindows.contains(windowId)
             {
                 let workspace = self
                 Task { @MainActor in
@@ -103,20 +103,20 @@ extension Workspace {
                     let widthDiff = abs(actual.width - r.width)
                     let heightDiff = abs(actual.height - r.height)
                     if widthDiff > 150 && heightDiff > 150 {
-                        workspace.gridLayout.nonResizableWindows.insert(windowId)
+                        workspace.stackingLayout.nonResizableWindows.insert(windowId)
                         // Remember the app bundle so future windows of
                         // the same app skip grid registration entirely
                         // and open as floating.
                         let appId = window.app.rawAppBundleId ?? ""
                         if !appId.isEmpty { knownNonResizableAppIds.insert(appId) }
-                        _ = workspace.gridLayout.remove(windowId)
+                        _ = workspace.stackingLayout.remove(windowId)
                         window.bindAsFloatingWindow(to: workspace)
                         let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
                         let cx = monRect.topLeftX + (monRect.width - actual.width) / 2
                         let cy = monRect.topLeftY + (monRect.height - actual.height) / 2
                         window.setAxFrame(CGPoint(x: cx, y: cy), actual.size)
                     } else {
-                        workspace.gridLayout.verifiedResizableWindows.insert(windowId)
+                        workspace.stackingLayout.verifiedResizableWindows.insert(windowId)
                     }
                 }
             }
@@ -126,8 +126,8 @@ extension Workspace {
             // correct fit. Slot-axis grow runs regardless of lane
             // occupancy; lane-axis grow is gated to single-window
             // tiles inside the check itself.
-            if gridLayout.placements[windowId] != nil {
-                scheduleGridFitCheck(window: window, requested: r, workspace: self, slotGap: slotGap)
+            if stackingLayout.placements[windowId] != nil {
+                scheduleStackingFitCheck(window: window, requested: r, workspace: self, slotGap: slotGap)
             }
         }
         for window in children.filterIsInstance(of: Window.self) {
@@ -197,7 +197,7 @@ extension TreeNode {
 /// focused slot grows to its observed min and the neighbour slots
 /// shrink proportionally.
 @MainActor
-fileprivate func scheduleGridFitCheck(window: Window, requested r: Rect, workspace: Workspace, slotGap: CGFloat) {
+fileprivate func scheduleStackingFitCheck(window: Window, requested r: Rect, workspace: Workspace, slotGap: CGFloat) {
     let windowId = window.windowId
     gridFitCheckTasks[windowId]?.cancel()
     gridFitCheckTasks[windowId] = Task { @MainActor in
@@ -207,8 +207,8 @@ fileprivate func scheduleGridFitCheck(window: Window, requested r: Rect, workspa
         let widthOver = actual.width - r.width
         let heightOver = actual.height - r.height
         guard widthOver > 20 || heightOver > 20 else { return }
-        guard let span = workspace.gridLayout.placements[windowId] else { return }
-        let layout = workspace.gridLayout
+        guard let span = workspace.stackingLayout.placements[windowId] else { return }
+        let layout = workspace.stackingLayout
         var minSize = layout.observedMinSizes[windowId] ?? .zero
         if widthOver > 20  { minSize.width  = max(minSize.width,  actual.width)  }
         if heightOver > 20 { minSize.height = max(minSize.height, actual.height) }

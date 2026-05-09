@@ -1,17 +1,17 @@
 import AppKit
 import SwiftUI
 
-/// Floating mini-grid HUD shown when a window is moved or placed via
-/// `mur grid-move` / `mur grid-place`. Mirrors the on-screen layout
-/// faithfully:
+/// Floating mini-grid HUD shown when a window is moved, resized, or
+/// placed via `mur stacking-move` / `mur stacking-resize` / `mur stacking-place`.
+/// Mirrors the on-screen layout faithfully:
 ///   - empty lanes are collapsed (only used lanes appear);
 ///   - each lane's width is proportional to its `laneWeight`;
 ///   - each cell's secondary-axis size is proportional to its slot weight.
 ///
 /// The currently focused span is highlighted. Auto-dismisses 1.5s after
 /// the last `update(...)`.
-@MainActor final class GridHud: NSPanelHud {
-    static var shared: GridHud = GridHud()
+@MainActor final class StackingHud: NSPanelHud {
+    static var shared: StackingHud = StackingHud()
     private var timer: Timer?
     private var panelFrame = NSRect(x: 0, y: 0, width: 220, height: 140)
 
@@ -19,7 +19,7 @@ import SwiftUI
         super.init()
     }
 
-    func update(layout: GridLayout, span: TileSpan, hoverSpan: TileSpan? = nil) {
+    func update(layout: StackingLayout, span: TileSpan, hoverSpan: TileSpan? = nil) {
         timer?.invalidate()
         contentView?.subviews.removeAll()
         let used = layout.usedLanes
@@ -40,7 +40,7 @@ import SwiftUI
                 }
             }
         }
-        let snapshot = GridHudSnapshot(
+        let snapshot = StackingHudSnapshot(
             orientation: layout.shape.orientation,
             usedLanes: used,
             laneWeights: laneWeights,
@@ -50,7 +50,7 @@ import SwiftUI
             hoverSpan: hoverSpan,
             cellCounts: cellCounts,
         )
-        let hostingView = NSHostingView(rootView: GridHudView(snapshot: snapshot))
+        let hostingView = NSHostingView(rootView: StackingHudView(snapshot: snapshot))
         hostingView.frame = NSRect(x: 0, y: 0, width: panelFrame.width, height: panelFrame.height)
         contentView?.addSubview(hostingView)
         panelFrame.origin.x = mainMonitor.width - panelFrame.size.width - 20
@@ -69,7 +69,7 @@ import SwiftUI
     }
 }
 
-struct GridHudSnapshot {
+struct StackingHudSnapshot {
     let orientation: LayoutOrientation
     /// Used lane indices (sorted ascending). Maps HUD column position →
     /// real lane index (so span hit-tests use the right value).
@@ -91,8 +91,8 @@ struct GridHudSnapshot {
     let cellCounts: [[Int]]
 }
 
-struct GridHudView: View {
-    let snapshot: GridHudSnapshot
+struct StackingHudView: View {
+    let snapshot: StackingHudSnapshot
 
     @Environment(\.colorScheme) var colorScheme: ColorScheme
     private var fillColor: Color { colorScheme == .dark ? .white : .black }

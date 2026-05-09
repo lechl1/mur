@@ -1,14 +1,14 @@
-// mur — phase 2 CLI command. Move the focused window one tile in a
-// cardinal direction. Lane axis (left/right) clamps at the grid bounds.
-// Slot axis (up/down) clamps at 0 going up; going down past the last
-// slot APPENDS a new slot to the lane.
-public struct GridMoveCmdArgs: CmdArgs {
+// mur — phase 2 CLI command. Bloom-resize the focused window's lane / slot
+// along a fraction ladder (1/16 ↔ ... ↔ 1/2 ↔ ... ↔ 15/16). Other lanes
+// (or slots within the lane) absorb / donate weight proportionally. The
+// window itself stays put — this is a pure resize, not a move.
+public struct StackingResizeCmdArgs: CmdArgs {
     /*conforms*/ public var commonState: CmdArgsCommonState
     init(rawArgs: StrArrSlice) { self.commonState = .init(rawArgs) }
     public static let parser: CmdParser<Self> = .init(
-        kind: .gridMove,
+        kind: .stackingResize,
         allowInConfig: true,
-        help: grid_move_help_generated,
+        help: stacking_resize_help_generated,
         flags: [
             "--window-id": windowIdSubArgParser(),
         ],
