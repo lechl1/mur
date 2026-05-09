@@ -29,13 +29,27 @@ struct GridFloatCommand: Command {
             return .fail
         }
         layout.remove(window.windowId)
+        window.bindAsFloatingWindow(to: workspace)
+        // Async work: center the window on its monitor + persist the
+        // memory clearance. Both touch AX or disk; do them off the
+        // request-handling path.
         Task { @MainActor in
+            // Center the now-floating window on the workspace's monitor.
+            // Use the current AX size if we can read it, else fall back
+            // to a conservative half-monitor square.
+            let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+            let size: CGSize = (try? await window.getAxRect())?.size
+                ?? window.lastFloatingSize
+                ?? CGSize(width: monRect.width / 2, height: monRect.height / 2)
+            let cx = monRect.topLeftX + (monRect.width - size.width) / 2
+            let cy = monRect.topLeftY + (monRect.height - size.height) / 2
+            window.setAxFrame(CGPoint(x: cx, y: cy), size)
+
             let appId = window.app.rawAppBundleId ?? ""
             let title = (try? await window.title) ?? ""
             windowMemory.forget(appId: appId, title: title, shape: layout.shape)
             windowMemory.save()
         }
-        window.bindAsFloatingWindow(to: workspace)
         return .succ
     }
 }

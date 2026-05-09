@@ -184,6 +184,17 @@ final class GridLayout {
     /// these weights are workspace-level.
     private var _laneWeights: [CGFloat]?
 
+    /// Window IDs auto-detected as non-resizable (app refused setAxFrame).
+    /// These are removed from the grid and floated. Session-only — a
+    /// reopened window goes through registration again (and may be
+    /// auto-floated again if it's still non-resizable).
+    var nonResizableWindows: Set<WindowId> = []
+
+    /// Window IDs that successfully accepted a setAxFrame within
+    /// tolerance. Cached so the post-layout verification AX query only
+    /// runs ONCE per window, not on every refresh.
+    var verifiedResizableWindows: Set<WindowId> = []
+
     func laneWeight(lane: Int) -> CGFloat {
         guard lane >= 0, lane < shape.lanes else { return 1.0 }
         return _laneWeights?[lane] ?? 1.0

@@ -54,6 +54,38 @@ extension Workspace {
             window.lastAppliedLayoutPhysicalRect = r
             window.lastAppliedLayoutVirtualRect = r
             window.setAxFrame(r.topLeftCorner, r.size)
+
+            // mur — auto-float non-resizable windows. Once per window:
+            // wait briefly for the resize to settle, then compare the
+            // actual rect against what we asked for. If both dims differ
+            // by more than 150px, the app has a fixed window size we
+            // can't tile — float it. Threshold accommodates min-size
+            // constraints that narrow ONE dimension only.
+            if !gridLayout.verifiedResizableWindows.contains(windowId)
+                && !gridLayout.nonResizableWindows.contains(windowId)
+            {
+                let workspace = self
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    guard let actual = try? await window.getAxRect() else { return }
+                    let widthDiff = abs(actual.width - r.width)
+                    let heightDiff = abs(actual.height - r.height)
+                    if widthDiff > 150 && heightDiff > 150 {
+                        workspace.gridLayout.nonResizableWindows.insert(windowId)
+                        _ = workspace.gridLayout.remove(windowId)
+                        window.bindAsFloatingWindow(to: workspace)
+                        // Center the now-floating window on its monitor —
+                        // its previous tiled rect is meaningless, and an
+                        // off-screen origin is jarring.
+                        let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+                        let cx = monRect.topLeftX + (monRect.width - actual.width) / 2
+                        let cy = monRect.topLeftY + (monRect.height - actual.height) / 2
+                        window.setAxFrame(CGPoint(x: cx, y: cy), actual.size)
+                    } else {
+                        workspace.gridLayout.verifiedResizableWindows.insert(windowId)
+                    }
+                }
+            }
         }
         for window in children.filterIsInstance(of: Window.self) {
             window.lastAppliedLayoutPhysicalRect = nil
