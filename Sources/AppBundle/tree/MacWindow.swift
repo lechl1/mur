@@ -84,6 +84,13 @@ final class MacWindow: Window {
         if MacWindow.allWindowsMap.removeValue(forKey: windowId) == nil {
             return
         }
+        // mur — drop the dead window from any workspace's gridLayout
+        // so `compactGaps()` runs and the freed lane / slot collapses.
+        if config.experimentalGridLayout {
+            for workspace in Workspace.all where workspace.gridLayout.placements[windowId] != nil {
+                _ = workspace.gridLayout.remove(windowId)
+            }
+        }
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace

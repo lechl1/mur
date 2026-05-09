@@ -74,15 +74,54 @@ extension Workspace {
                         workspace.gridLayout.nonResizableWindows.insert(windowId)
                         _ = workspace.gridLayout.remove(windowId)
                         window.bindAsFloatingWindow(to: workspace)
-                        // Center the now-floating window on its monitor —
-                        // its previous tiled rect is meaningless, and an
-                        // off-screen origin is jarring.
                         let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
                         let cx = monRect.topLeftX + (monRect.width - actual.width) / 2
                         let cy = monRect.topLeftY + (monRect.height - actual.height) / 2
                         window.setAxFrame(CGPoint(x: cx, y: cy), actual.size)
                     } else {
                         workspace.gridLayout.verifiedResizableWindows.insert(windowId)
+                        // mur — rebalance: if the window resists shrink
+                        // along one axis (min-width / min-height), grow
+                        // its lane / slot to fit the actual size and
+                        // shrink the other tiles proportionally.
+                        let widthOver = actual.width - r.width
+                        let heightOver = actual.height - r.height
+                        if widthOver > 20 || heightOver > 20,
+                           let span = workspace.gridLayout.placements[windowId]
+                        {
+                            let layout = workspace.gridLayout
+                            let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+                            let isLandscape = layout.shape.orientation == .landscape
+                            let used = layout.usedLanes
+                            let slots = layout.slotCount(in: span.lane0)
+                            let totalLaneGap = max(0, CGFloat(used.count - 1)) * slotGap
+                            let totalSlotGap = max(0, CGFloat(slots - 1)) * slotGap
+                            let usableLanePx = (isLandscape ? monRect.width : monRect.height) - totalLaneGap
+                            let usableSlotPx = (isLandscape ? monRect.height : monRect.width) - totalSlotGap
+                            let laneOver = isLandscape ? widthOver : heightOver
+                            let slotOver = isLandscape ? heightOver : widthOver
+                            let requiredLanePx = isLandscape ? actual.width : actual.height
+                            let requiredSlotPx = isLandscape ? actual.height : actual.width
+                            var changed = false
+                            if laneOver > 20 {
+                                changed = layout.growLaneToFit(
+                                    requiredPx: requiredLanePx,
+                                    lane: span.lane0,
+                                    totalUsablePx: usableLanePx,
+                                ) || changed
+                            }
+                            if slotOver > 20 {
+                                changed = layout.growSlotToFit(
+                                    requiredPx: requiredSlotPx,
+                                    lane: span.lane0,
+                                    slot: span.slot0,
+                                    totalUsablePx: usableSlotPx,
+                                ) || changed
+                            }
+                            if changed {
+                                scheduleCancellableCompleteRefreshSession(.ax("grow-to-fit"))
+                            }
+                        }
                     }
                 }
             }

@@ -99,26 +99,26 @@ struct GridLayoutTest {
 
     // MARK: placement heuristic
 
-    @Test func newWindowOnEmptyWorkspaceGoesToMiddleLane() {
-        // 6-lane default → middle lane = 3.
+    @Test func newWindowOnEmptyWorkspaceGoesToLaneZero() {
         let layout = GridLayout()
         let span = layout.placementForNewWindow()
-        #expect(span == .soleSlot(lane: 3))
+        #expect(span == .soleSlot(lane: 0))
     }
 
-    @Test func newWindowAdjacentToSingleUsedLane() {
+    @Test func newWindowStacksInFocusedLane() {
         let layout = GridLayout()
         layout.place(1, at: .soleSlot(lane: 0))
-        let span = layout.placementForNewWindow()
-        // Lane 0 used, lane 1 is the adjacent empty (right has more space).
-        #expect(span == .soleSlot(lane: 1))
+        // Focused on lane 0 → next window stacks below it.
+        let span = layout.placementForNewWindow(focusedLane: 0)
+        #expect(span == .single(lane: 0, slot: 1))
     }
 
-    @Test func newWindowAddsSlotWhenAllLanesUsed() {
+    @Test func newWindowStacksInRightmostUsedWhenNoFocus() {
         let layout = GridLayout()
-        for l in 0..<6 { layout.place(WindowId(100 + l), at: .soleSlot(lane: l)) }
-        // No empty lane; with focus on lane 1, add a new slot to lane 1.
-        let span = layout.placementForNewWindow(focusedLane: 1)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        // No focusedLane → use rightmost used (lane 1).
+        let span = layout.placementForNewWindow()
         #expect(span == .single(lane: 1, slot: 1))
     }
 
@@ -167,6 +167,87 @@ struct GridLayoutTest {
         #expect(span.lane1 == 1)
         #expect(span.isSingleLane)
         #expect(span.laneCount == 1)
+    }
+
+    // MARK: column / row swap
+
+    @Test func swapLanesMovesAllPlacements() {
+        // Two windows in lane 0, one in lane 1. Swap lanes 0 ↔ 1.
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        layout.place(3, at: .soleSlot(lane: 1))
+        layout.swapLanes(0, 1)
+        #expect(layout.placements[1] == .single(lane: 1, slot: 0))
+        #expect(layout.placements[2] == .single(lane: 1, slot: 1))
+        #expect(layout.placements[3] == .soleSlot(lane: 0))
+    }
+
+    @Test func swapLanesPreservesPerLaneSlotWeights() {
+        // Lane 0 has slot weights [2, 1]; lane 1 has [1]. After swap,
+        // each column's row partition follows it.
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        layout.place(3, at: .soleSlot(lane: 1))
+        layout.setSlotWeights(lane: 0, weights: [2, 1])
+        layout.swapLanes(0, 1)
+        // The 2:1 partition should now belong to lane 1.
+        #expect(layout.slotWeight(lane: 1, slot: 0) == 2)
+        #expect(layout.slotWeight(lane: 1, slot: 1) == 1)
+    }
+
+    @Test func swapLanesSwapsLaneWeights() {
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        var weights = [CGFloat](repeating: 1.0, count: 6)
+        weights[0] = 3
+        weights[1] = 1
+        layout.setLaneWeights(weights)
+        layout.swapLanes(0, 1)
+        #expect(layout.laneWeight(lane: 0) == 1)
+        #expect(layout.laneWeight(lane: 1) == 3)
+    }
+
+    @Test func appendLaneGrowsShape() {
+        let layout = GridLayout(shape: .landscapeDefault)
+        let before = layout.shape.lanes
+        let newIdx = layout.appendLane()
+        #expect(newIdx == before)
+        #expect(layout.shape.lanes == before + 1)
+    }
+
+    @Test func insertLaneAtFrontShiftsPlacements() {
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.insertLaneAtFront()
+        // Both windows shifted right by 1.
+        #expect(layout.placements[1] == .soleSlot(lane: 1))
+        #expect(layout.placements[2] == .soleSlot(lane: 2))
+        #expect(layout.shape.lanes == 7)
+    }
+
+    @Test func insertSlotAtFrontShiftsPlacementsInLane() {
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        layout.place(3, at: .soleSlot(lane: 1)) // different lane — should NOT shift
+        layout.insertSlotAtFront(in: 0)
+        #expect(layout.placements[1] == .single(lane: 0, slot: 1))
+        #expect(layout.placements[2] == .single(lane: 0, slot: 2))
+        #expect(layout.placements[3] == .soleSlot(lane: 1))
+    }
+
+    @Test func swapSlotsWithinLane() {
+        // Two windows stacked in lane 0. Swap rows.
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        layout.swapSlots(in: 0, 0, 1)
+        #expect(layout.placements[1] == .single(lane: 0, slot: 1))
+        #expect(layout.placements[2] == .single(lane: 0, slot: 0))
     }
 
     // MARK: rigid lane axis

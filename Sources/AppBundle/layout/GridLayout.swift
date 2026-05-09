@@ -134,6 +134,7 @@ final class GridLayout {
         }
         zOrder.removeAll { $0 == windowId }
         zOrder.append(windowId)
+        compactGaps()
     }
 
     @discardableResult
@@ -141,13 +142,220 @@ final class GridLayout {
         guard let span = placements.removeValue(forKey: windowId) else { return nil }
         zOrder.removeAll { $0 == windowId }
         for lane in span.lane0...span.lane1 { compactLaneIfNeeded(lane) }
+        compactGaps()
         return span
+    }
+
+    /// Squeeze out empty cells: shift used lanes leftward so they're
+    /// contiguous from index 0, and renumber slots within each lane to
+    /// be contiguous from 0. `shape.lanes` stays put — trailing empties
+    /// remain available for `appendLane()` and the rigid-grid feel is
+    /// preserved. Slot and lane weights migrate with their indices.
+    /// Single-lane spans only — multi-lane spans use `lane0`'s slot map.
+    private func compactGaps() {
+        let oldUsed = usedLanes
+        if oldUsed.isEmpty {
+            slotWeights.removeAll()
+            return
+        }
+        // Lane renumber: shift leftward to fill gaps.
+        var laneMap: [Int: Int] = [:]
+        for (newL, oldL) in oldUsed.enumerated() { laneMap[oldL] = newL }
+        let laneShift = oldUsed.enumerated().contains { $0.offset != $0.element }
+        // Per-lane slot renumber maps + new weights.
+        var slotMaps: [Int: [Int: Int]] = [:]
+        var newSlotWeights: [Int: [CGFloat]] = [:]
+        var slotShift = false
+        for (newL, oldL) in oldUsed.enumerated() {
+            var usedSlots = Set<Int>()
+            for span in placements.values where span.lane0 <= oldL && oldL <= span.lane1 {
+                for s in span.slot0...span.slot1 { usedSlots.insert(s) }
+            }
+            let sorted = usedSlots.sorted()
+            var sm: [Int: Int] = [:]
+            var weights: [CGFloat] = []
+            for (newS, oldS) in sorted.enumerated() {
+                sm[oldS] = newS
+                if newS != oldS { slotShift = true }
+                weights.append(slotWeight(lane: oldL, slot: oldS))
+            }
+            slotMaps[newL] = sm
+            newSlotWeights[newL] = weights
+        }
+        guard laneShift || slotShift else { return } // already tight
+        // Renumber placements.
+        var newPlacements: [WindowId: TileSpan] = [:]
+        for (wid, span) in placements {
+            guard let nl0 = laneMap[span.lane0], let nl1 = laneMap[span.lane1],
+                  let sm = slotMaps[nl0],
+                  let ns0 = sm[span.slot0], let ns1 = sm[span.slot1]
+            else { continue }
+            newPlacements[wid] = TileSpan(lane0: nl0, lane1: nl1, slot0: ns0, slot1: ns1)
+        }
+        // Renumber lane weights — keep shape.lanes count, pad trailing with 1.0.
+        if let oldLW = _laneWeights {
+            var nlw: [CGFloat] = []
+            for oldL in oldUsed {
+                nlw.append(oldL < oldLW.count ? oldLW[oldL] : 1.0)
+            }
+            while nlw.count < shape.lanes { nlw.append(1.0) }
+            _laneWeights = nlw
+        }
+        placements = newPlacements
+        slotWeights = newSlotWeights
+        // shape.lanes UNCHANGED — trailing empties are part of the rigid grid.
     }
 
     func promote(_ windowId: WindowId) {
         guard placements[windowId] != nil else { return }
         zOrder.removeAll { $0 == windowId }
         zOrder.append(windowId)
+    }
+
+    /// Swap two columns wholesale: every placement currently in `laneA`
+    /// moves to `laneB` (and vice-versa), `laneWeights` swap, and the
+    /// per-lane slot weights swap so each column keeps its own row
+    /// partition. Multi-lane spans that overlap exactly one of the
+    /// swapped lanes pivot accordingly; spans that straddle both lanes
+    /// are left unchanged (rare in the bloom model).
+    func swapLanes(_ laneA: Int, _ laneB: Int) {
+        guard laneA != laneB,
+              0 <= laneA, laneA < shape.lanes,
+              0 <= laneB, laneB < shape.lanes else { return }
+        var newPlacements: [WindowId: TileSpan] = [:]
+        for (wid, span) in placements {
+            let nl0 = span.lane0 == laneA ? laneB : (span.lane0 == laneB ? laneA : span.lane0)
+            let nl1 = span.lane1 == laneA ? laneB : (span.lane1 == laneB ? laneA : span.lane1)
+            if nl0 <= nl1 {
+                newPlacements[wid] = TileSpan(lane0: nl0, lane1: nl1, slot0: span.slot0, slot1: span.slot1)
+            } else {
+                newPlacements[wid] = span
+            }
+        }
+        placements = newPlacements
+        // Swap lane weights.
+        var weights: [CGFloat] = []
+        for l in 0..<shape.lanes { weights.append(laneWeight(lane: l)) }
+        weights.swapAt(laneA, laneB)
+        _laneWeights = weights
+        // Swap per-lane slot weights so each column keeps its own row partition.
+        let wA = slotWeights[laneA]
+        let wB = slotWeights[laneB]
+        slotWeights[laneA] = wB
+        slotWeights[laneB] = wA
+    }
+
+    /// Append a brand new lane at the trailing edge, growing
+    /// `shape.lanes` by 1. Returns the new lane's index. Lane weights
+    /// for the new lane default to 1.0 (the implicit fallback).
+    func appendLane() -> Int {
+        let newIdx = shape.lanes
+        shape = LayoutShape(orientation: shape.orientation, lanes: shape.lanes + 1)
+        return newIdx
+    }
+
+    /// Insert a new lane at index 0, shifting every existing placement,
+    /// slot-weight key, and lane-weight entry one position to the right.
+    /// Used by `grid-swap` at the leading edge.
+    func insertLaneAtFront() {
+        var newPlacements: [WindowId: TileSpan] = [:]
+        for (wid, span) in placements {
+            newPlacements[wid] = TileSpan(
+                lane0: span.lane0 + 1, lane1: span.lane1 + 1,
+                slot0: span.slot0, slot1: span.slot1,
+            )
+        }
+        placements = newPlacements
+        var newSlotWeights: [Int: [CGFloat]] = [:]
+        for (lane, w) in slotWeights { newSlotWeights[lane + 1] = w }
+        slotWeights = newSlotWeights
+        if var lw = _laneWeights {
+            lw.insert(1.0, at: 0)
+            _laneWeights = lw
+        }
+        shape = LayoutShape(orientation: shape.orientation, lanes: shape.lanes + 1)
+    }
+
+    /// Insert a new slot at index 0 within `lane`, shifting every
+    /// placement that touches the lane down by 1 along the slot axis.
+    func insertSlotAtFront(in lane: Int) { insertSlot(in: lane, at: 0) }
+
+    /// Insert a new slot at `slotIdx` within `lane`. Placements in the
+    /// lane at slots `>= slotIdx` shift down by 1; slot weights gain a
+    /// new 1.0 entry at `slotIdx`. Used by `grid-swap` when merging a
+    /// dragged-in window between existing rows of the target column.
+    func insertSlot(in lane: Int, at slotIdx: Int) {
+        guard 0 <= lane, lane < shape.lanes, slotIdx >= 0 else { return }
+        var newPlacements: [WindowId: TileSpan] = [:]
+        for (wid, span) in placements {
+            if span.lane0 <= lane && lane <= span.lane1 && span.slot0 >= slotIdx {
+                newPlacements[wid] = TileSpan(
+                    lane0: span.lane0, lane1: span.lane1,
+                    slot0: span.slot0 + 1, slot1: span.slot1 + 1,
+                )
+            } else {
+                newPlacements[wid] = span
+            }
+        }
+        placements = newPlacements
+        var sw = slotWeights[lane] ?? []
+        let cap = min(slotIdx, sw.count)
+        sw.insert(1.0, at: cap)
+        slotWeights[lane] = sw
+    }
+
+    /// Pick the slot index in `lane` that best matches a vertical (or
+    /// horizontal in portrait) point. Used by `grid-swap` to decide
+    /// above-vs-below when a window merges into a target column.
+    /// Returns `0..<slotCount(in: lane)` for "insert before slot N",
+    /// or `slotCount(in: lane)` for "append at the end".
+    func insertionSlot(in lane: Int, at point: CGPoint, available: Rect, innerGap: CGFloat = 0) -> Int {
+        let slots = slotCount(in: lane)
+        if slots == 0 { return 0 }
+        var weights: [CGFloat] = []
+        for s in 0..<slots { weights.append(slotWeight(lane: lane, slot: s)) }
+        let total = weights.reduce(0, +)
+        guard total > 0 else { return 0 }
+        let landscape = shape.orientation == .landscape
+        let pt = landscape ? point.y : point.x
+        let start = landscape ? available.topLeftY : available.topLeftX
+        let extent = landscape ? available.height : available.width
+        let usable = extent - max(0, CGFloat(slots - 1)) * innerGap
+        var c = start
+        for s in 0..<slots {
+            let w = weights[s] / total * usable
+            if pt < c + w / 2 { return s }
+            c += w + innerGap
+        }
+        return slots
+    }
+
+    /// Swap two rows within a single lane: every placement in `lane`
+    /// touching `slotA` moves to `slotB` (and vice-versa), and the
+    /// lane's slot weights swap so each row keeps its size.
+    func swapSlots(in lane: Int, _ slotA: Int, _ slotB: Int) {
+        guard slotA != slotB, 0 <= lane, lane < shape.lanes else { return }
+        var newPlacements: [WindowId: TileSpan] = [:]
+        for (wid, span) in placements {
+            if span.lane0 <= lane && lane <= span.lane1 {
+                let ns0 = span.slot0 == slotA ? slotB : (span.slot0 == slotB ? slotA : span.slot0)
+                let ns1 = span.slot1 == slotA ? slotB : (span.slot1 == slotB ? slotA : span.slot1)
+                if ns0 <= ns1 {
+                    newPlacements[wid] = TileSpan(lane0: span.lane0, lane1: span.lane1, slot0: ns0, slot1: ns1)
+                } else {
+                    newPlacements[wid] = span
+                }
+            } else {
+                newPlacements[wid] = span
+            }
+        }
+        placements = newPlacements
+        // Swap slot weights for this lane.
+        var sw = slotWeights[lane] ?? []
+        let needed = max(slotA, slotB) + 1
+        while sw.count < needed { sw.append(1.0) }
+        sw.swapAt(slotA, slotB)
+        slotWeights[lane] = sw
     }
 
     /// Switch shape (e.g. monitor rotated, or user changed lane count).
@@ -353,47 +561,141 @@ extension GridLayout {
     }
 }
 
+// MARK: - Grow-to-fit (rebalance after a window resists shrink)
+
+extension GridLayout {
+    /// Grow `lane`'s weight so its rendered main-axis size hits at least
+    /// `requiredPx`, redistributing the freed weight across other used
+    /// lanes proportionally. No-op if there's only one used lane (no
+    /// donor) or the lane already fits. Floors every other lane at
+    /// 1/16 of the used total — the resize ladder's minimum.
+    @discardableResult
+    func growLaneToFit(requiredPx: CGFloat, lane: Int, totalUsablePx: CGFloat) -> Bool {
+        let used = usedLanes
+        guard used.count >= 2, lane >= 0, lane < shape.lanes, totalUsablePx > 0 else { return false }
+        var weights: [CGFloat] = []
+        for l in 0..<shape.lanes { weights.append(laneWeight(lane: l)) }
+        let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
+        guard usedTotal > 0 else { return false }
+        let pxPerWeight = totalUsablePx / usedTotal
+        let currentPx = weights[lane] * pxPerWeight
+        if currentPx + 1 >= requiredPx { return false }
+        let minOther: CGFloat = usedTotal / 16
+        let maxAllowed = usedTotal - CGFloat(used.count - 1) * minOther
+        let newW = min(requiredPx / pxPerWeight, maxAllowed)
+        if newW <= weights[lane] { return false }
+        let delta = newW - weights[lane]
+        let sumOthers = usedTotal - weights[lane]
+        guard sumOthers > 0 else { return false }
+        weights[lane] = newW
+        for l in used where l != lane {
+            weights[l] -= delta * (weights[l] / sumOthers)
+        }
+        if weights.contains(where: { $0 <= 0 }) { return false }
+        setLaneWeights(weights)
+        return true
+    }
+
+    /// Same idea on the slot axis within `lane`.
+    @discardableResult
+    func growSlotToFit(requiredPx: CGFloat, lane: Int, slot: Int, totalUsablePx: CGFloat) -> Bool {
+        guard 0 <= lane, lane < shape.lanes, totalUsablePx > 0 else { return false }
+        let slots = slotCount(in: lane)
+        guard slots >= 2, slot >= 0, slot < slots else { return false }
+        var weights: [CGFloat] = []
+        for s in 0..<slots { weights.append(slotWeight(lane: lane, slot: s)) }
+        let total = weights.reduce(0, +)
+        guard total > 0 else { return false }
+        let pxPerWeight = totalUsablePx / total
+        let currentPx = weights[slot] * pxPerWeight
+        if currentPx + 1 >= requiredPx { return false }
+        let minOther: CGFloat = total / 16
+        let maxAllowed = total - CGFloat(slots - 1) * minOther
+        let newW = min(requiredPx / pxPerWeight, maxAllowed)
+        if newW <= weights[slot] { return false }
+        let delta = newW - weights[slot]
+        let sumOthers = total - weights[slot]
+        guard sumOthers > 0 else { return false }
+        weights[slot] = newW
+        for s in 0..<slots where s != slot {
+            weights[s] -= delta * (weights[s] / sumOthers)
+        }
+        if weights.contains(where: { $0 <= 0 }) { return false }
+        setSlotWeights(lane: lane, weights: weights)
+        return true
+    }
+}
+
+// MARK: - Hit testing
+
+extension GridLayout {
+    /// Find the (lane, slot) cell containing `point`, given the
+    /// workspace's available rect. Used for drag-and-drop snap.
+    /// Returns nil when the grid is empty.
+    func cellAt(point: CGPoint, in available: Rect, innerGap: CGFloat = 0) -> (lane: Int, slot: Int)? {
+        let used = usedLanes
+        guard !used.isEmpty else { return nil }
+        let totalLaneGap = max(0, CGFloat(used.count - 1)) * innerGap
+        let usedLW = used.map { laneWeight(lane: $0) }
+        let totalLW = usedLW.reduce(0, +)
+        guard totalLW > 0 else { return nil }
+
+        let mainPt: CGFloat, secPt: CGFloat
+        let mainStart: CGFloat, secStart: CGFloat
+        let usableMain: CGFloat, usableSecAxis: CGFloat
+        switch shape.orientation {
+            case .landscape:
+                mainPt = point.x; secPt = point.y
+                mainStart = available.topLeftX; secStart = available.topLeftY
+                usableMain = available.width - totalLaneGap
+                usableSecAxis = available.height
+            case .portrait:
+                mainPt = point.y; secPt = point.x
+                mainStart = available.topLeftY; secStart = available.topLeftX
+                usableMain = available.height - totalLaneGap
+                usableSecAxis = available.width
+        }
+        // Walk lane partition.
+        var c = mainStart
+        var lane = used.last ?? 0
+        for (i, l) in used.enumerated() {
+            let w = usedLW[i] / totalLW * usableMain
+            if mainPt < c + w { lane = l; break }
+            c += w + innerGap
+        }
+        // Walk slot partition within that lane.
+        let slots = slotCount(in: lane)
+        guard slots > 0 else { return (lane, 0) }
+        var sw: [CGFloat] = []
+        for s in 0..<slots { sw.append(slotWeight(lane: lane, slot: s)) }
+        let totalSW = sw.reduce(0, +)
+        let totalSlotGap = max(0, CGFloat(slots - 1)) * innerGap
+        let usableSec = usableSecAxis - totalSlotGap
+        var c2 = secStart
+        var slot = slots - 1
+        for s in 0..<slots {
+            let w = sw[s] / totalSW * usableSec
+            if secPt < c2 + w { slot = s; break }
+            c2 += w + innerGap
+        }
+        return (lane, slot)
+    }
+}
+
 // MARK: - Placement heuristic
 
 extension GridLayout {
-    /// Decide where a new window goes. With 6 rigid lanes:
-    ///
-    ///   - empty workspace → middle lane.
-    ///   - one lane used → an adjacent empty lane (preferring the side
-    ///     with more space, so the focused window doesn't get squashed).
-    ///   - several lanes used + an empty lane exists → nearest empty
-    ///     lane to the focus anchor.
-    ///   - all lanes used → add a new slot at the bottom of the focused
-    ///     lane (or middle if no focus). Stacking is preferable to
-    ///     overlapping.
+    /// Decide where a new window goes:
+    ///   - empty workspace → lane 0, slot 0.
+    ///   - otherwise → stack as a new bottom row in the focused window's
+    ///     column. If there's no focused tiled window, stack in the
+    ///     rightmost used lane.
+    /// New columns are user-driven (`grid-place`, drag-and-drop, or the
+    /// extend-on-edge gesture) — never auto-created on window open.
     func placementForNewWindow(focusedLane: Int? = nil) -> TileSpan {
         let used = usedLanes
-
-        if used.isEmpty { return .soleSlot(lane: shape.middleLane) }
-
-        if used.count == 1 {
-            let lStar = used[0]
-            let leftEmpty = lStar - 1 >= 0 && !used.contains(lStar - 1)
-            let rightEmpty = lStar + 1 < shape.lanes && !used.contains(lStar + 1)
-            switch (leftEmpty, rightEmpty) {
-                case (true, true):
-                    let leftSpace = lStar
-                    let rightSpace = shape.lanes - 1 - lStar
-                    return .soleSlot(lane: rightSpace >= leftSpace ? lStar + 1 : lStar - 1)
-                case (true, false): return .soleSlot(lane: lStar - 1)
-                case (false, true): return .soleSlot(lane: lStar + 1)
-                case (false, false): break
-            }
-        }
-
-        let empties = emptyLanes
-        if !empties.isEmpty {
-            let anchor = focusedLane ?? shape.middleLane
-            let nearest = empties.min { abs($0 - anchor) < abs($1 - anchor) } ?? empties[0]
-            return .soleSlot(lane: nearest)
-        }
-
-        let targetLane = focusedLane ?? shape.middleLane
+        if used.isEmpty { return .soleSlot(lane: 0) }
+        let targetLane = focusedLane ?? used.last!
         let newSlot = slotCount(in: targetLane)
         return .single(lane: targetLane, slot: newSlot)
     }
