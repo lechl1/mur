@@ -3,12 +3,63 @@ import AppKit
 extension Workspace {
     @MainActor
     func layoutWorkspace() async throws {
+        // mur — phase 1.3. When the experimental grid is enabled AND it
+        // owns at least one window, dispatch to the grid path. Otherwise
+        // fall through to the existing tree-based layout. This means the
+        // tree continues to drive layout for any pre-existing windows
+        // that haven't been migrated into the grid yet.
+        if config.experimentalGridLayout && !gridLayout.isEmpty {
+            try await layoutWorkspaceWithGrid()
+            return
+        }
         if isEffectivelyEmpty { return }
         let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
         // If monitors are aligned vertically and the monitor below has smaller width, then macOS may not allow the
         // window on the upper monitor to take full width. rect.height - 1 resolves this problem
         // But I also faced this problem in monitors horizontal configuration. ¯\_(ツ)_/¯
         try await layoutRecursive(rect.topLeftCorner, width: rect.width, height: rect.height - 1, virtual: rect, LayoutContext(self))
+    }
+
+    /// mur — phase 1.3 grid-based layout dispatch.
+    ///
+    /// Walks `gridLayout.zOrder` back→front and `setAxFrame`s each tiled
+    /// window to the rect resolved from its `TileSpan`. Floating windows
+    /// (direct Window children of this Workspace) are then laid out by
+    /// the existing path. The tree (`rootTilingContainer`) is dormant
+    /// when this method runs.
+    ///
+    /// Z-order: setAxFrame doesn't control front-to-back ordering on its
+    /// own; that's a focus/raise concern handled when a window is
+    /// promoted in `gridLayout`. This function only places geometry.
+    @MainActor
+    fileprivate func layoutWorkspaceWithGrid() async throws {
+        let context = LayoutContext(self)
+        let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
+        // Reshape if monitor orientation has changed since last layout.
+        let mon = rect
+        let nowOrientation = LayoutOrientation.forMonitor(width: mon.width, height: mon.height)
+        if nowOrientation != gridLayout.shape.orientation {
+            _ = gridLayout.reshape(to: LayoutShape(orientation: nowOrientation, lanes: gridLayout.shape.lanes))
+        }
+        // Single-axis inner gap for now (slot axis). Lane-axis gap is
+        // a refinement for a later commit; in the meantime, slots and
+        // lanes share the same gap for visual consistency.
+        let slotGap = CGFloat(context.resolvedGaps.inner.get(
+            gridLayout.shape.orientation == .landscape ? .v : .h
+        ))
+        for windowId in gridLayout.zOrder {
+            guard let window = Window.get(byId: windowId) else { continue }
+            if window.windowId == currentlyManipulatedWithMouseWindowId { continue }
+            guard let r = gridLayout.resolveRect(for: windowId, in: rect, innerGap: slotGap) else { continue }
+            window.lastAppliedLayoutPhysicalRect = r
+            window.lastAppliedLayoutVirtualRect = r
+            window.setAxFrame(r.topLeftCorner, r.size)
+        }
+        for window in children.filterIsInstance(of: Window.self) {
+            window.lastAppliedLayoutPhysicalRect = nil
+            window.lastAppliedLayoutVirtualRect = nil
+            try await window.layoutFloatingWindow(context)
+        }
     }
 }
 
