@@ -59,6 +59,18 @@ enum GlobalObserver {
             //  The end of the callback calls refreshSession
             Task { @MainActor in
                 guard let token: RunSessionGuard = .isServerEnabled else { return }
+                // mur — drag-drop snap. Commit a grid drag (if any)
+                // before resetting the mouse-manipulation state.
+                if let session = gridDragSession {
+                    gridDragSession = nil
+                    if let cell = session.hoverCell, Window.get(byId: session.windowId) != nil {
+                        let target = TileSpan(
+                            lane0: cell.lane, lane1: cell.lane,
+                            slot0: cell.slot, slot1: cell.slot,
+                        )
+                        session.workspace.gridLayout.place(session.windowId, at: target)
+                    }
+                }
                 try await resetManipulatedWithMouseIfPossible()
                 let mouseLocation = mouseLocation
                 let clickedMonitor = mouseLocation.monitorApproximation

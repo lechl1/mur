@@ -44,6 +44,8 @@ extension CmdArgs {
                 command = GridMoveCommand(args: self as! GridMoveCmdArgs)
             case .gridPlace:
                 command = GridPlaceCommand(args: self as! GridPlaceCmdArgs)
+            case .gridSwap:
+                command = GridSwapCommand(args: self as! GridSwapCmdArgs)
             case .joinWith:
                 command = JoinWithCommand(args: self as! JoinWithCmdArgs)
             case .layout:

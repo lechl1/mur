@@ -2,29 +2,21 @@ import AppKit
 import Common
 import Foundation
 
-/// `mur grid-move <left|down|up|right>` — move the focused window one
-/// tile in the given cardinal direction.
+/// `mur grid-move <left|down|up|right>` — **resize** the focused
+/// window's column / row in the press direction. Despite the name,
+/// this command no longer moves the window; movement lives on
+/// `mur grid-swap`. Renaming would break existing keybindings, so
+/// the spelling is kept.
 ///
-/// Lane axis (left/right in landscape, up/down in portrait) uses a
-/// **bloom-and-contract** sequence so a series of presses traces a
-/// natural arc across the grid. With 6 rigid lanes, pressing right from
-/// (0,0):
+///   - landscape: left/right shrink/grow the column; up/down shrink/grow
+///     the row within the focused lane.
+///   - portrait flips the axes.
 ///
-///       (0,0) → (0,1) → (0,2) → (0,3) → (0,4) → (0,5) →
-///       (1,5) → (2,5) → (3,5) → (4,5) → (5,5)
-///       1-wide  2-wide  3-wide  4-wide  5-wide  6-wide
-///       5-wide  4-wide  3-wide  2-wide  1-wide
-///
-/// The window grows by extending the trailing edge while it has room,
-/// then contracts from the leading edge once it hits the far wall.
-/// Symmetric in reverse: pressing left from (5,5) walks back along the
-/// same chain.
-///
-/// Slot axis (up/down in landscape, left/right in portrait) keeps the
-/// simple single-step semantics:
-///   - upward / leftward → slot0 -= 1, clamped at 0.
-///   - downward / rightward → slot0 += 1, lane extends past the bottom.
-///   - slotCount is preserved across the move.
+/// The resize walks a discrete fraction ladder (1/16 ↔ 1/2 ↔ 15/16) so
+/// repeated presses snap to recognisable proportions. The freed (or
+/// borrowed) weight is distributed across the other used lanes / slots
+/// proportionally to keep the partition tight and never sends any
+/// lane / slot below 1/16.
 struct GridMoveCommand: Command {
     let args: GridMoveCmdArgs
     /*conforms*/ let shouldResetClosedWindowsCache = false
@@ -60,64 +52,116 @@ struct GridMoveCommand: Command {
             case (.portrait,  .right): (isLaneAxis, signum) = (false, +1)
         }
 
-        var newLane0 = current.lane0
-        var newLane1 = current.lane1
-        var newSlot0 = current.slot0
-        var newSlot1 = current.slot1
-
         if isLaneAxis {
-            (newLane0, newLane1) = GridMove.bloomLaneStep(
-                lane0: current.lane0, lane1: current.lane1,
-                lanes: shape.lanes, signum: signum,
-            )
+            GridMove.resizeLane(layout: layout, lane: current.lane0, signum: signum)
         } else {
-            if signum > 0 {
-                newSlot0 = current.slot0 + 1
-                newSlot1 = newSlot0 + (current.slot1 - current.slot0)
-            } else {
-                newSlot0 = max(0, current.slot0 - 1)
-                newSlot1 = newSlot0 + (current.slot1 - current.slot0)
-            }
+            GridMove.resizeSlot(layout: layout, lane: current.lane0, slot: current.slot0, signum: signum)
         }
-
-        let span = TileSpan(lane0: newLane0, lane1: newLane1, slot0: newSlot0, slot1: newSlot1)
-        layout.place(window.windowId, at: span)
-        GridHud.shared.update(layout: layout, span: span)
+        // Window doesn't move; HUD reflects the new lane / slot weights
+        // (it queries `layout.laneWeight` / `slotWeight` on update).
+        GridHud.shared.update(layout: layout, span: current)
         Task { @MainActor in
             let appId = window.app.rawAppBundleId ?? ""
             let title = (try? await window.title) ?? ""
-            windowMemory.remember(appId: appId, title: title, shape: shape, span: span)
+            windowMemory.remember(appId: appId, title: title, shape: shape, span: current)
             windowMemory.save()
         }
         return .succ
     }
 }
 
-/// Pure step functions for `grid-move`. Factored out for unit testing.
+/// Pure resize functions for `grid-move`. Factored out for unit testing.
 enum GridMove {
-    /// One step of the bloom-and-contract walk along the lane axis.
-    /// Returns the next `(lane0, lane1)` given the current state and a
-    /// signum (+1 for "right/down toward higher index", -1 for the
-    /// opposite). The walk is symmetric: applying `+1` then `-1` from
-    /// any state returns to the same state.
-    ///
-    /// Rule:
-    ///   signum > 0:
-    ///     * if `lane1 < lanes-1` → grow trailing edge (lane1 += 1)
-    ///     * else if `lane0 < lane1` → shrink leading edge (lane0 += 1)
-    ///     * else (already at single-cell extreme) → no-op
-    ///   signum < 0: mirrored.
-    static func bloomLaneStep(lane0: Int, lane1: Int, lanes: Int, signum: Int) -> (Int, Int) {
-        precondition(lane0 <= lane1 && lane0 >= 0 && lane1 < lanes,
-                     "bloomLaneStep: invalid input (\(lane0), \(lane1)) in \(lanes) lanes")
-        if signum > 0 {
-            if lane1 < lanes - 1 { return (lane0, lane1 + 1) }
-            if lane0 < lane1     { return (lane0 + 1, lane1) }
-            return (lane0, lane1)
-        } else {
-            if lane0 > 0         { return (lane0 - 1, lane1) }
-            if lane1 > lane0     { return (lane0, lane1 - 1) }
-            return (lane0, lane1)
+    /// Discrete ladder of fractions the resize snaps to. Values run
+    /// 1/16, 1/15, …, 1/3, 1/2, 2/3, 3/4, …, 15/16 — symmetric around
+    /// 1/2. A press in the shrink direction picks the next-smaller
+    /// rung, a press in the grow direction picks the next-larger.
+    static let resizeFractionLadder: [CGFloat] = {
+        var ladder: [CGFloat] = []
+        let MAX_N = 16
+        // Shrink half: 1/MAX_N → 1/2.
+        for n in (2...MAX_N).reversed() {
+            ladder.append(1.0 / CGFloat(n))
         }
+        // Grow half: 2/3 → (MAX_N-1)/MAX_N. (1/2 already in ladder.)
+        for n in 3...MAX_N {
+            ladder.append(CGFloat(n - 1) / CGFloat(n))
+        }
+        return ladder
+    }()
+
+    /// Index in `resizeFractionLadder` of the rung closest to `f`.
+    static func nearestLadderIndex(for f: CGFloat) -> Int {
+        var bestIdx = 0
+        var bestDist = abs(resizeFractionLadder[0] - f)
+        for i in 1..<resizeFractionLadder.count {
+            let d = abs(resizeFractionLadder[i] - f)
+            if d < bestDist {
+                bestDist = d
+                bestIdx = i
+            }
+        }
+        return bestIdx
+    }
+
+    /// Resize `lane` by stepping along `resizeFractionLadder`. `signum`
+    /// > 0 grows; < 0 shrinks. The freed (or borrowed) weight is
+    /// distributed proportionally across other used lanes. No-op if
+    /// fewer than 2 used lanes (no others to absorb / donate).
+    static func resizeLane(layout: GridLayout, lane: Int, signum: Int) {
+        let used = layout.usedLanes
+        guard used.count >= 2, lane >= 0, lane < layout.shape.lanes else { return }
+        var weights: [CGFloat] = []
+        for l in 0..<layout.shape.lanes { weights.append(layout.laneWeight(lane: l)) }
+        let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
+        guard usedTotal > 0 else { return }
+        let w = weights[lane]
+        guard w > 0 else { return }
+        let f = w / usedTotal
+        let target = stepLadder(from: f, signum: signum)
+        guard target != f else { return }
+        let newW = target * usedTotal
+        let delta = newW - w
+        let sumOthers = usedTotal - w
+        guard sumOthers > 0 else { return }
+        weights[lane] = newW
+        for l in used where l != lane {
+            weights[l] -= delta * (weights[l] / sumOthers)
+        }
+        if weights.contains(where: { $0 <= 0 }) { return }
+        layout.setLaneWeights(weights)
+    }
+
+    /// Resize `slot` within `lane`. Same ladder semantics as `resizeLane`.
+    static func resizeSlot(layout: GridLayout, lane: Int, slot: Int, signum: Int) {
+        guard 0 <= lane, lane < layout.shape.lanes else { return }
+        let slots = layout.slotCount(in: lane)
+        guard slots >= 2, slot >= 0, slot < slots else { return }
+        var weights: [CGFloat] = []
+        for s in 0..<slots { weights.append(layout.slotWeight(lane: lane, slot: s)) }
+        let total = weights.reduce(0, +)
+        guard total > 0 else { return }
+        let w = weights[slot]
+        guard w > 0 else { return }
+        let f = w / total
+        let target = stepLadder(from: f, signum: signum)
+        guard target != f else { return }
+        let newW = target * total
+        let delta = newW - w
+        let sumOthers = total - w
+        guard sumOthers > 0 else { return }
+        weights[slot] = newW
+        for s in 0..<slots where s != slot {
+            weights[s] -= delta * (weights[s] / sumOthers)
+        }
+        if weights.contains(where: { $0 <= 0 }) { return }
+        layout.setSlotWeights(lane: lane, weights: weights)
+    }
+
+    private static func stepLadder(from f: CGFloat, signum: Int) -> CGFloat {
+        let idx = nearestLadderIndex(for: f)
+        let target = signum > 0 ? idx + 1 : idx - 1
+        guard target >= 0, target < resizeFractionLadder.count else { return f }
+        return resizeFractionLadder[target]
     }
 }

@@ -19,7 +19,7 @@ import SwiftUI
         super.init()
     }
 
-    func update(layout: GridLayout, span: TileSpan) {
+    func update(layout: GridLayout, span: TileSpan, hoverSpan: TileSpan? = nil) {
         timer?.invalidate()
         contentView?.subviews.removeAll()
         let used = layout.usedLanes
@@ -35,6 +35,7 @@ import SwiftUI
             slotsPerLane: slotsPerLane,
             slotWeights: slotWeights,
             span: span,
+            hoverSpan: hoverSpan,
         )
         let hostingView = NSHostingView(rootView: GridHudView(snapshot: snapshot))
         hostingView.frame = NSRect(x: 0, y: 0, width: panelFrame.width, height: panelFrame.height)
@@ -68,6 +69,10 @@ struct GridHudSnapshot {
     /// `slotsPerLane`).
     let slotWeights: [[CGFloat]]
     let span: TileSpan
+    /// Optional drop-target preview shown during a drag-and-drop. Drawn
+    /// with a distinct accent color so the user knows where the window
+    /// will land if they release the mouse.
+    let hoverSpan: TileSpan?
 }
 
 struct GridHudView: View {
@@ -159,7 +164,16 @@ struct GridHudView: View {
     private func cell(lane: Int, slot: Int) -> some View {
         let isActive = snapshot.span.lane0 <= lane && lane <= snapshot.span.lane1
             && snapshot.span.slot0 <= slot && slot <= snapshot.span.slot1
-        return RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            .fill(isActive ? fillColor : emptyColor)
+        let isHover = snapshot.hoverSpan.map { h in
+            h.lane0 <= lane && lane <= h.lane1 && h.slot0 <= slot && slot <= h.slot1
+        } ?? false
+        return ZStack {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(isActive ? fillColor : emptyColor)
+            if isHover {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.accentColor, lineWidth: 2)
+            }
+        }
     }
 }

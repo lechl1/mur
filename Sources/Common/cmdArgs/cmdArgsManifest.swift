@@ -21,6 +21,7 @@ public enum CmdKind: String, CaseIterable, Equatable, Sendable {
     case gridInfo = "grid-info"            // mur — phase 2
     case gridMove = "grid-move"   // mur — phase 2
     case gridPlace = "grid-place" // mur — phase 2
+    case gridSwap = "grid-swap"   // mur — phase 2
     case joinWith = "join-with"
     case layout
     case listApps = "list-apps"
@@ -94,6 +95,8 @@ func initSubcommands() -> [String: any SubCommandParserProtocol] {
                 result[kind.rawValue] = SubCommandParser(GridMoveCmdArgs.init)
             case .gridPlace:
                 result[kind.rawValue] = SubCommandParser(parseGridPlaceCmdArgs)
+            case .gridSwap:
+                result[kind.rawValue] = SubCommandParser(GridSwapCmdArgs.init)
             case .joinWith:
                 result[kind.rawValue] = SubCommandParser(JoinWithCmdArgs.init)
             case .layout:

@@ -75,6 +75,9 @@ let grid_move_help_generated = """
 let grid_place_help_generated = """
     USAGE: grid-place [-h|--help] [--window-id <window-id>] [--workspace <workspace>] <lane> <slot0> <slot1>
     """
+let grid_swap_help_generated = """
+    USAGE: grid-swap [-h|--help] [--window-id <window-id>] (left|down|up|right)
+    """
 let join_with_help_generated = """
     USAGE: join-with [-h|--help] [--window-id <window-id>] (left|down|up|right)
     """
