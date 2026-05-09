@@ -1,7 +1,10 @@
 import Common
 import Foundation
 
-let configDotfileName = ".aerospace.toml"
+// Config file lookup is renamed from upstream so mur and AeroSpace can
+// coexist without overwriting each other's config. Locations checked, in
+// order: $HOME/.mur.toml, then $XDG_CONFIG_HOME/mur/mur.toml.
+let configDotfileName = ".mur.toml"
 func findCustomConfigUrl() -> ConfigFile {
     let xdgConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].map { URL(filePath: $0) }
         ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".config/")
@@ -10,7 +13,7 @@ func findCustomConfigUrl() -> ConfigFile {
         case nil:
             [
                 FileManager.default.homeDirectoryForCurrentUser.appending(path: configDotfileName),
-                xdgConfigHome.appending(path: "aerospace").appending(path: "aerospace.toml"),
+                xdgConfigHome.appending(path: "mur").appending(path: "mur.toml"),
             ]
     }
     let existingCandidates: [URL] = candidates.filter { (candidate: URL) in FileManager.default.fileExists(atPath: candidate.path) }
