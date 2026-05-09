@@ -32,6 +32,8 @@ extension CmdArgs {
                 command = FocusMonitorCommand(args: self as! FocusMonitorCmdArgs)
             case .fullscreen:
                 command = FullscreenCommand(args: self as! FullscreenCmdArgs)
+            case .gridInfo:
+                command = GridInfoCommand(args: self as! GridInfoCmdArgs)
             case .joinWith:
                 command = JoinWithCommand(args: self as! JoinWithCmdArgs)
             case .layout:
