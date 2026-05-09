@@ -89,6 +89,32 @@ struct GridResizeTest {
         #expect(abs(lw[1] - 0.6666) < 0.01)
     }
 
+    // MARK: lane-axis drag distributes across ALL lanes on the other side
+
+    @Test func landscapeRightDragWithThreeUsedLanesDistributesEvenly() {
+        // 3 used lanes; drag lane 0's right edge to the right by 150 px on
+        // a 900 px screen. Lane 0 should grow by 150; lanes 1 and 2 should
+        // each shrink by 75 (not lane 1 by 150 + lane 2 unchanged).
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.place(3, at: .soleSlot(lane: 2))
+        // Each lane starts at 300 px wide.
+        let last = Rect(topLeftX: 0, topLeftY: 0, width: 300, height: 600)
+        let cur  = Rect(topLeftX: 0, topLeftY: 0, width: 450, height: 600)
+        let result = GridResize.snap(.init(
+            layout: layout, windowId: 1,
+            lastAppliedRect: last, currentRect: cur,
+            available: landscapeAvail, innerGap: 0,
+        ))
+        let lw = result?.laneWeights ?? []
+        #expect(lw.count == 3)
+        // delta total = 150 / 900 * 3 = 0.5. Split across 2 → 0.25 each.
+        #expect(abs(lw[0] - 1.5) < 0.01)
+        #expect(abs(lw[1] - 0.75) < 0.01)
+        #expect(abs(lw[2] - 0.75) < 0.01)
+    }
+
     // MARK: jitter and edge cases
 
     @Test func subPixelJitterIgnored() {

@@ -139,12 +139,12 @@ enum GridResize {
         }
 
         // -- lane-axis transfer (across used lanes) ------------------
-        // AeroSpace-style: dragging the right edge of a window grows
-        // its column and shrinks the column to its right (and v.v.).
-        // We operate on the USED-LANES partition; transfers happen
-        // between the dragged window's outer lane (lane0 for low edges,
-        // lane1 for high edges) and the immediate visible-neighbour
-        // lane on the dragged side.
+        // AeroSpace-style: dragging the high edge of a window grows the
+        // dragged lane (or `lane1` for multi-lane spans) and shrinks
+        // **every** USED lane on the high side, EQUALLY. Mirror for the
+        // low edge. With 3 used lanes, dragging col 0's right edge by
+        // 100 px grows col 0 by 100 and shrinks col 1 and col 2 by 50
+        // each — instead of dumping the whole 100 onto col 1.
         var resultLaneWeights: [CGFloat]? = nil
         if laneLow || laneHigh {
             let used = sample.layout.usedLanes
@@ -163,13 +163,21 @@ enum GridResize {
                 if usedTotal > 0 && usable > 0 {
                     if laneLow, let i0 = visIdx0, i0 > 0 {
                         // Drag low-edge outward → grow current lane (lane0),
-                        // shrink the previous USED lane.
-                        let d = (laneLowDelta / usable) * usedTotal
-                        transfer(&weights, from: used[i0 - 1], to: span.lane0, delta: d)
+                        // shrink every USED lane to its low side equally.
+                        let othersCount = i0
+                        let dTotal = (laneLowDelta / usable) * usedTotal
+                        let dPerOther = dTotal / CGFloat(othersCount)
+                        for j in 0..<i0 {
+                            transfer(&weights, from: used[j], to: span.lane0, delta: dPerOther)
+                        }
                     }
                     if laneHigh, let i1 = visIdx1, i1 < used.count - 1 {
-                        let d = (laneHighDelta / usable) * usedTotal
-                        transfer(&weights, from: used[i1 + 1], to: span.lane1, delta: d)
+                        let othersCount = used.count - 1 - i1
+                        let dTotal = (laneHighDelta / usable) * usedTotal
+                        let dPerOther = dTotal / CGFloat(othersCount)
+                        for j in (i1 + 1)..<used.count {
+                            transfer(&weights, from: used[j], to: span.lane1, delta: dPerOther)
+                        }
                     }
                     resultLaneWeights = weights
                 }
