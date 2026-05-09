@@ -137,6 +137,55 @@ When a window opens that **is** in `WindowMemory`, mur uses the stored
 span verbatim (clamped to the current `shape` if the layout changed). The
 heuristic above is skipped.
 
+## Mouse-driven resize
+
+Mur preserves AeroSpace's "drag any edge, the layout follows" feel —
+this is one of AeroSpace's best UX details and we keep the trigger and
+edge-diff approach untouched. Only the *commit* changes.
+
+### Tiled windows
+
+1. AX fires `kAXResizedNotification`. The existing `resizedObs` handler
+   (`mouse/resizeWithMouse.swift`) checks `isManipulatedWithMouse` and
+   schedules a light session — unchanged.
+2. Inside the session: compare `window.getAxRect()` (current pixel rect
+   the user has dragged to) against `window.lastAppliedLayoutPhysicalRect`
+   (the rect mur last drew). The pixel deltas tell us which edges moved
+   and by how much. This is identical to AeroSpace's logic.
+3. **New**: instead of mutating tree-node weights, build a
+   `GridResize.DragSample` and call `GridResize.snap(...)`. The snapper:
+    - Determines which edges the user dragged (epsilon-tolerant).
+    - Maps each dragged edge to the nearest **visible-cell boundary** in
+      `available` — this is the post-collapse pixel grid, so dragging
+      "feels" right even when empty rows/cols have collapsed and visible
+      cells are bigger than absolute cells.
+    - Translates the visible-cell boundary back to an absolute (col, row)
+      index using `usedCols` / `usedRows`.
+    - Returns a clamped `TileSpan`.
+4. Commit: `GridLayout.place(windowId, at: snapped)` and
+   `WindowMemory.remember(...)`. A refresh re-renders.
+
+The user therefore drags freely (pixel-level, just like AeroSpace), and
+on release (or live, depending on how aggressively we re-snap) the
+window snaps to the nearest valid `TileSpan`. Strict tile positioning is
+preserved without sacrificing the AeroSpace feel.
+
+### Floating windows
+
+Untouched. Floats keep their free-form pixel resize, exactly as in
+AeroSpace, including `lastFloatingSize` for restore-on-unfloat.
+
+### What gets deleted
+
+- `adaptiveWeightBeforeResizeWithMouseKey` and the per-tree-node
+  weight-before-resize cache.
+- `getWeightBeforeResize`, `resetResizeWeightBeforeResizeRecursive`.
+- The four-way `closestParent(hasChildrenInDirection:withLayout:)` walk.
+- `Orientation.getDimension` weight-axis logic.
+
+`currentlyManipulatedWithMouseWindowId`, `isManipulatedWithMouse`,
+`resizedObs` — all kept.
+
 ## Workspace state machine (replaces the tree)
 
 ```
