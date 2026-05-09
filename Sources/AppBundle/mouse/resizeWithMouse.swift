@@ -76,6 +76,16 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
                     if let lw = result.laneWeights {
                         workspace.gridLayout.setLaneWeights(lw)
                     }
+                    // mur — advance the baseline to the currently sampled
+                    // rect. The layout pass SKIPS the dragged window
+                    // (`currentlyManipulatedWithMouseWindowId`), so it
+                    // never updates `lastAppliedLayoutPhysicalRect` for
+                    // it. Without this, each AX event recomputes its
+                    // delta from the pre-drag rect — consecutive events
+                    // would re-apply *cumulative* weight mutations,
+                    // producing the "exponential" feedback the user
+                    // observed (linear cursor → quadratic redistribution).
+                    window.lastAppliedLayoutPhysicalRect = rect
                 }
                 currentlyManipulatedWithMouseWindowId = window.windowId
                 return
