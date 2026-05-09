@@ -75,15 +75,37 @@ struct GridFocusDirCommand: Command {
             let z = layout.zOrder.firstIndex(of: wid) ?? -1
             candidates.append(Candidate(id: wid, dist: d, zIdx: z))
         }
-        guard let best = candidates.min(by: { a, b in
+        if let best = candidates.min(by: { a, b in
             a.dist != b.dist ? a.dist < b.dist : a.zIdx > b.zIdx
-        }) else {
+        }) {
+            guard let nextWindow = Window.get(byId: best.id) else { return .fail }
+            nextWindow.nativeFocus()
+            layout.promote(best.id)
+            return .succ
+        }
+
+        // No legal target in the requested direction. Cycle through
+        // windows that share the focused tile instead — i.e. windows
+        // whose span overlaps the focused window's span. zOrder is
+        // ordered oldest → most-recent, so picking the highest zIdx
+        // among the siblings gives Cmd-Tab-style cycling through
+        // overlapping windows in the same cell.
+        struct Sibling { let id: WindowId; let zIdx: Int }
+        var siblings: [Sibling] = []
+        for (wid, span) in layout.placements where wid != window.windowId {
+            let laneOverlap = max(span.lane0, current.lane0) <= min(span.lane1, current.lane1)
+            let slotOverlap = max(span.slot0, current.slot0) <= min(span.slot1, current.slot1)
+            if laneOverlap && slotOverlap {
+                siblings.append(Sibling(id: wid, zIdx: layout.zOrder.firstIndex(of: wid) ?? -1))
+            }
+        }
+        guard let topmost = siblings.max(by: { $0.zIdx < $1.zIdx }) else {
             io.err("no grid window in direction \(args.direction.val.rawValue) from focused window")
             return .fail
         }
-        guard let nextWindow = Window.get(byId: best.id) else { return .fail }
+        guard let nextWindow = Window.get(byId: topmost.id) else { return .fail }
         nextWindow.nativeFocus()
-        layout.promote(best.id)
+        layout.promote(topmost.id)
         return .succ
     }
 }

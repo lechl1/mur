@@ -48,6 +48,37 @@ extension Workspace {
             gridLayout.shape.orientation == .landscape ? .v : .h
         ))
 
+        // mur — forced-resize pre-pass. Grow the lane / slot to fit
+        // the cached observed minimum so the upcoming setAxFrame
+        // produces the correct rect first time.
+        //   - Lane-axis grow is gated to single-window-per-tile, since
+        //     widening a lane that's shared with other tiles would
+        //     disrupt the lane-mates' widths uselessly.
+        //   - Slot-axis grow runs regardless of lane occupancy: when a
+        //     window moves up/down in landscape (or left/right in
+        //     portrait) within a column with neighbors, the focused
+        //     slot still grows to its observed min and the neighbour
+        //     slots shrink proportionally.
+        let isLandscape = gridLayout.shape.orientation == .landscape
+        for windowId in gridLayout.zOrder {
+            guard Window.get(byId: windowId) != nil,
+                  let span = gridLayout.placements[windowId],
+                  let minSize = gridLayout.observedMinSizes[windowId] else { continue }
+            if windowId == currentlyManipulatedWithMouseWindowId { continue }
+            let used = gridLayout.usedLanes
+            let totalLaneGap = max(0, CGFloat(used.count - 1)) * slotGap
+            let usableLanePx = (isLandscape ? rect.width : rect.height) - totalLaneGap
+            let slots = gridLayout.slotCount(in: span.lane0)
+            let totalSlotGap = max(0, CGFloat(slots - 1)) * slotGap
+            let usableSlotPx = (isLandscape ? rect.height : rect.width) - totalSlotGap
+            let minLanePx = isLandscape ? minSize.width : minSize.height
+            let minSlotPx = isLandscape ? minSize.height : minSize.width
+            if gridLayout.windows(in: span.lane0).count == 1 {
+                _ = gridLayout.growLaneToFit(requiredPx: minLanePx, lane: span.lane0, totalUsablePx: usableLanePx)
+            }
+            _ = gridLayout.growSlotToFit(requiredPx: minSlotPx, lane: span.lane0, slot: span.slot0, totalUsablePx: usableSlotPx)
+        }
+
         for windowId in gridLayout.zOrder {
             guard let window = Window.get(byId: windowId) else { continue }
             if window.windowId == currentlyManipulatedWithMouseWindowId { continue }
@@ -88,6 +119,15 @@ extension Workspace {
                         workspace.gridLayout.verifiedResizableWindows.insert(windowId)
                     }
                 }
+            }
+            // mur — debounced fit-check. Records the observed min size
+            // + grows the lane / slot if it overflowed. The pre-pass
+            // on the next layout uses the cached size for an instant
+            // correct fit. Slot-axis grow runs regardless of lane
+            // occupancy; lane-axis grow is gated to single-window
+            // tiles inside the check itself.
+            if gridLayout.placements[windowId] != nil {
+                scheduleGridFitCheck(window: window, requested: r, workspace: self, slotGap: slotGap)
             }
         }
         for window in children.filterIsInstance(of: Window.self) {
@@ -137,6 +177,72 @@ extension TreeNode {
                  .macosPopupWindowsContainer, .macosHiddenAppsWindowsContainer:
                 return // Nothing to do for weirdos
         }
+    }
+}
+
+// MARK: - Debounced fit-check (forced resize)
+
+@MainActor private var gridFitCheckTasks: [WindowId: Task<Void, Never>] = [:]
+
+/// Lazily verify that a tile fits its window's actual rect. Cancels
+/// any pending check for the same window, schedules a fresh one 20ms
+/// out, and on fire reads `getAxRect`, caches the observed min size,
+/// and grows the lane / slot via `growLaneToFit` / `growSlotToFit`
+/// if either dimension is over by more than 20px.
+///
+/// Lane-axis grow is gated to single-window tiles (otherwise it would
+/// fight the lane-mates). Slot-axis grow runs regardless of lane
+/// occupancy: when a window moves up/down in a populated column
+/// (landscape) or left/right in a populated row (portrait), the
+/// focused slot grows to its observed min and the neighbour slots
+/// shrink proportionally.
+@MainActor
+fileprivate func scheduleGridFitCheck(window: Window, requested r: Rect, workspace: Workspace, slotGap: CGFloat) {
+    let windowId = window.windowId
+    gridFitCheckTasks[windowId]?.cancel()
+    gridFitCheckTasks[windowId] = Task { @MainActor in
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        if Task.isCancelled { return }
+        guard let actual = try? await window.getAxRect() else { return }
+        let widthOver = actual.width - r.width
+        let heightOver = actual.height - r.height
+        guard widthOver > 20 || heightOver > 20 else { return }
+        guard let span = workspace.gridLayout.placements[windowId] else { return }
+        let layout = workspace.gridLayout
+        var minSize = layout.observedMinSizes[windowId] ?? .zero
+        if widthOver > 20  { minSize.width  = max(minSize.width,  actual.width)  }
+        if heightOver > 20 { minSize.height = max(minSize.height, actual.height) }
+        layout.observedMinSizes[windowId] = minSize
+        let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+        let isLandscape = layout.shape.orientation == .landscape
+        let used = layout.usedLanes
+        let slots = layout.slotCount(in: span.lane0)
+        let totalLaneGap = max(0, CGFloat(used.count - 1)) * slotGap
+        let totalSlotGap = max(0, CGFloat(slots - 1)) * slotGap
+        let usableLanePx = (isLandscape ? monRect.width : monRect.height) - totalLaneGap
+        let usableSlotPx = (isLandscape ? monRect.height : monRect.width) - totalSlotGap
+        let laneOver = isLandscape ? widthOver : heightOver
+        let slotOver = isLandscape ? heightOver : widthOver
+        let requiredLanePx = isLandscape ? actual.width : actual.height
+        let requiredSlotPx = isLandscape ? actual.height : actual.width
+        let isSoloInLane = layout.windows(in: span.lane0).count == 1
+        var changed = false
+        if laneOver > 20 && isSoloInLane {
+            changed = layout.growLaneToFit(
+                requiredPx: requiredLanePx, lane: span.lane0,
+                totalUsablePx: usableLanePx,
+            ) || changed
+        }
+        if slotOver > 20 {
+            changed = layout.growSlotToFit(
+                requiredPx: requiredSlotPx, lane: span.lane0, slot: span.slot0,
+                totalUsablePx: usableSlotPx,
+            ) || changed
+        }
+        if changed {
+            scheduleCancellableCompleteRefreshSession(.ax("grow-to-fit"))
+        }
+        gridFitCheckTasks[windowId] = nil
     }
 }
 

@@ -161,10 +161,13 @@ struct GridSwapCommand: Command {
             }
         } else {
             // Slot axis (top/bottom in landscape, left/right in portrait).
-            //   - slot-mates exist (focused shares the cell with another
-            //     window) → EXTRACT focused into a fresh slot in the
-            //     press direction so the two windows un-overlap.
-            //   - neighbour slot exists → swap.
+            // Same alternation as the lane axis:
+            //   - slot-mates exist (focused shares the cell) → EXTRACT
+            //     focused into a fresh slot so they un-overlap.
+            //   - neighbour slot exists → alternate per same-direction
+            //     press: OVERLAP (focused moves to neighbour's slot,
+            //     sharing the cell) then ADD-NEW-TILE (insert new slot
+            //     between source and neighbour).
             //   - edge, no slot-mates → shrink the row.
             let myLane = current.lane0
             let mySlot = signum > 0 ? current.slot1 : current.slot0
@@ -183,7 +186,34 @@ struct GridSwapCommand: Command {
                     slot0: insertAt, slot1: insertAt,
                 ))
             } else if neighborSlot >= 0 && neighborSlot < slots {
-                layout.swapSlots(in: myLane, mySlot, neighborSlot)
+                let dir = args.direction.val
+                let slotIsOverlap: Bool
+                if let g = gridSwapGesture, g.windowId == window.windowId, g.direction == dir {
+                    slotIsOverlap = g.nextIsOverlap
+                } else {
+                    slotIsOverlap = true
+                }
+                gridSwapGesture = GridSwapGesture(
+                    windowId: window.windowId, direction: dir, nextIsOverlap: !slotIsOverlap,
+                )
+                if slotIsOverlap {
+                    // OVERLAP with the adjacent slot's window: place
+                    // focused at the same slot index — they share the
+                    // cell and z-order picks the front.
+                    layout.place(window.windowId, at: TileSpan(
+                        lane0: myLane, lane1: myLane,
+                        slot0: neighborSlot, slot1: neighborSlot,
+                    ))
+                } else {
+                    // ADD-NEW-TILE: insert a fresh slot between source
+                    // and neighbour; focused moves into it alone.
+                    let insertAt = signum > 0 ? mySlot + 1 : mySlot
+                    layout.insertSlot(in: myLane, at: insertAt)
+                    layout.place(window.windowId, at: TileSpan(
+                        lane0: myLane, lane1: myLane,
+                        slot0: insertAt, slot1: insertAt,
+                    ))
+                }
             } else {
                 GridMove.resizeSlot(layout: layout, lane: myLane, slot: mySlot, signum: -1)
             }

@@ -117,12 +117,28 @@ final class GridLayout {
     /// indices are clamped to `0..<shape.lanes` (the lane axis is
     /// rigid; bloom-style moves never go past it). The window is
     /// promoted to the top of `zOrder`.
+    ///
+    /// **Remembered-size rebalance.** When a *moved* window lands in
+    /// a brand-new lane (insert-between / extract), the new lane gets
+    /// the moved window's previous lane weight so its rendered column
+    /// width is preserved. Surviving lanes keep their relative
+    /// proportions and shrink so the total fills the screen. Same on
+    /// the slot axis when a move lands in a fresh slot. Newly-opened
+    /// windows (no `oldSpan`) get the default 1.0 weight, no rebalance.
     func place(_ windowId: WindowId, at requested: TileSpan) {
         guard requested.lane0 >= 0, requested.lane1 < shape.lanes else {
             remove(windowId)
             return
         }
+        // Snapshot OLD state for the lane-axis remembered-size rebalance.
+        let oldUsedLanes = Set(usedLanes)
+        let oldLaneWeightsByIdx: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        let oldUsedSum = oldUsedLanes.reduce(0.0) { $0 + oldLaneWeightsByIdx[$1] }
         let oldSpan = placements[windowId]
+        let oldFocusedLaneWeight: CGFloat? = oldSpan.map { oldLaneWeightsByIdx[$0.lane0] }
+        let oldSlotCountInTargetLane = oldUsedLanes.contains(requested.lane0)
+            ? slotCount(in: requested.lane0) : 0
+
         placements[windowId] = requested
         for lane in requested.lane0...requested.lane1 {
             ensureSlotWeightsCapacity(lane: lane, upTo: requested.slot1)
@@ -134,7 +150,172 @@ final class GridLayout {
         }
         zOrder.removeAll { $0 == windowId }
         zOrder.append(windowId)
+
+        // Lane-axis rebalance: moved into a brand-new lane.
+        if !oldUsedLanes.contains(requested.lane0),
+           let w = oldFocusedLaneWeight, w > 0, oldUsedSum > w
+        {
+            rebalanceForNewLaneRemembering(
+                requested.lane0, oldFocusedWeight: w, oldUsedSum: oldUsedSum,
+            )
+        }
+        // Slot-axis rebalance: moved into a fresh slot of an existing
+        // lane. The new slot gets `1/N` of the lane height (landscape)
+        // / row width (portrait); the other slots keep their relative
+        // proportions and shrink to a combined `(N-1)/N` share.
+        else if requested.slot0 >= oldSlotCountInTargetLane {
+            rebalanceForNewSlot1OverN(in: requested.lane0, requested.slot0)
+        }
         compactGaps()
+        normalizeWeights()
+    }
+
+    /// Self-heal: enforce the `usedTotal/16` floor on every used lane
+    /// and on the slot weights of each used lane. Without this a prior
+    /// extreme grow can leave non-focused lanes / slots well below the
+    /// ladder's minimum, making the grid feel "stuck" — many presses
+    /// then needed to recover. Total per axis is conserved.
+    func normalizeWeights() {
+        let used = usedLanes
+        if used.count >= 2 {
+            var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+            let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
+            if usedTotal > 0 {
+                let minPer = usedTotal / 16
+                applyFloor(&weights, indices: used, minPer: minPer)
+                if weights.allSatisfy({ $0 > 0 }) {
+                    setLaneWeights(weights)
+                }
+            }
+        }
+        for lane in used {
+            let slots = slotCount(in: lane)
+            guard slots >= 2 else { continue }
+            var w: [CGFloat] = (0..<slots).map { slotWeight(lane: lane, slot: $0) }
+            let total = w.reduce(0, +)
+            guard total > 0 else { continue }
+            let minPer = total / 16
+            applyFloor(&w, indices: Array(0..<slots), minPer: minPer)
+            if w.allSatisfy({ $0 > 0 }) {
+                setSlotWeights(lane: lane, weights: w)
+            }
+        }
+    }
+
+    private func applyFloor(_ weights: inout [CGFloat], indices: [Int], minPer: CGFloat) {
+        var deficit: CGFloat = 0
+        for i in indices where weights[i] < minPer {
+            deficit += minPer - weights[i]
+            weights[i] = minPer
+        }
+        guard deficit > 0 else { return }
+        let donorAvailable = indices.reduce(0.0) { $0 + max(0, weights[$1] - minPer) }
+        guard donorAvailable > 0 else { return }
+        for i in indices where weights[i] > minPer {
+            let avail = weights[i] - minPer
+            weights[i] -= deficit * (avail / donorAvailable)
+        }
+    }
+
+    /// New slot gets `1/N` of the lane axis; other slots in the lane
+    /// keep their relative proportions and shrink to `(N-1)/N` total.
+    private func rebalanceForNewSlot1OverN(in lane: Int, _ newSlotIdx: Int) {
+        guard 0 <= lane, lane < shape.lanes else { return }
+        let slots = slotCount(in: lane)
+        guard slots >= 2, 0 <= newSlotIdx, newSlotIdx < slots else { return }
+        var weights: [CGFloat] = (0..<slots).map { slotWeight(lane: lane, slot: $0) }
+        let othersOldSum = (0..<slots).filter { $0 != newSlotIdx }.reduce(0.0) { $0 + weights[$1] }
+        guard othersOldSum > 0 else { return }
+        let n = CGFloat(slots)
+        weights[newSlotIdx] = 1.0
+        for s in 0..<slots where s != newSlotIdx {
+            weights[s] = weights[s] * (n - 1) / othersOldSum
+        }
+        setSlotWeights(lane: lane, weights: weights)
+    }
+
+    /// Set the new lane's weight to the moved window's previous lane
+    /// weight. Surviving used lanes keep their relative proportions and
+    /// scale by `(oldUsedSum − oldFocusedWeight) / sum(survivor old
+    /// weights)` so the visible partition still sums to the available
+    /// width.
+    private func rebalanceForNewLaneRemembering(
+        _ newLaneIdx: Int,
+        oldFocusedWeight w: CGFloat,
+        oldUsedSum S: CGFloat,
+    ) {
+        let used = usedLanes
+        guard used.count >= 2, 0 <= newLaneIdx, newLaneIdx < shape.lanes else { return }
+        guard w > 0, S > w else { return }
+        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        let survivors = used.filter { $0 != newLaneIdx }
+        let survivorsOldSum = survivors.reduce(0.0) { $0 + weights[$1] }
+        guard survivorsOldSum > 0 else { return }
+        let scale = (S - w) / survivorsOldSum
+        weights[newLaneIdx] = w
+        for l in survivors {
+            weights[l] = weights[l] * scale
+        }
+        setLaneWeights(weights)
+    }
+
+    /// Grow `lane`'s weight so its rendered main-axis size hits at
+    /// least `requiredPx`. Other used lanes shrink proportionally.
+    /// Each donor stays above `usedTotal/16` so the resize ladder's
+    /// minimum is preserved. No-op when there's only one used lane.
+    /// Used by the forced-resize path for windows that own their tile.
+    @discardableResult
+    func growLaneToFit(requiredPx: CGFloat, lane: Int, totalUsablePx: CGFloat) -> Bool {
+        let used = usedLanes
+        guard used.count >= 2, lane >= 0, lane < shape.lanes, totalUsablePx > 0 else { return false }
+        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
+        guard usedTotal > 0 else { return false }
+        let pxPerWeight = totalUsablePx / usedTotal
+        let currentPx = weights[lane] * pxPerWeight
+        if currentPx + 1 >= requiredPx { return false }
+        let minOther: CGFloat = usedTotal / 16
+        let maxAllowed = usedTotal - CGFloat(used.count - 1) * minOther
+        let newW = min(requiredPx / pxPerWeight, maxAllowed)
+        if newW <= weights[lane] { return false }
+        let delta = newW - weights[lane]
+        let sumOthers = usedTotal - weights[lane]
+        guard sumOthers > 0 else { return false }
+        weights[lane] = newW
+        for l in used where l != lane {
+            weights[l] -= delta * (weights[l] / sumOthers)
+        }
+        if weights.contains(where: { $0 <= 0 }) { return false }
+        setLaneWeights(weights)
+        return true
+    }
+
+    /// Same idea on the slot axis within `lane`.
+    @discardableResult
+    func growSlotToFit(requiredPx: CGFloat, lane: Int, slot: Int, totalUsablePx: CGFloat) -> Bool {
+        guard 0 <= lane, lane < shape.lanes, totalUsablePx > 0 else { return false }
+        let slots = slotCount(in: lane)
+        guard slots >= 2, slot >= 0, slot < slots else { return false }
+        var weights: [CGFloat] = (0..<slots).map { slotWeight(lane: lane, slot: $0) }
+        let total = weights.reduce(0, +)
+        guard total > 0 else { return false }
+        let pxPerWeight = totalUsablePx / total
+        let currentPx = weights[slot] * pxPerWeight
+        if currentPx + 1 >= requiredPx { return false }
+        let minOther: CGFloat = total / 16
+        let maxAllowed = total - CGFloat(slots - 1) * minOther
+        let newW = min(requiredPx / pxPerWeight, maxAllowed)
+        if newW <= weights[slot] { return false }
+        let delta = newW - weights[slot]
+        let sumOthers = total - weights[slot]
+        guard sumOthers > 0 else { return false }
+        weights[slot] = newW
+        for s in 0..<slots where s != slot {
+            weights[s] -= delta * (weights[s] / sumOthers)
+        }
+        if weights.contains(where: { $0 <= 0 }) { return false }
+        setSlotWeights(lane: lane, weights: weights)
+        return true
     }
 
     @discardableResult
@@ -484,6 +665,15 @@ final class GridLayout {
     /// tolerance. Cached so the post-layout verification AX query only
     /// runs ONCE per window, not on every refresh.
     var verifiedResizableWindows: Set<WindowId> = []
+
+    /// Minimum content size observed for a window — populated by the
+    /// post-`setAxFrame` fit-check whenever an app refused to shrink.
+    /// On subsequent layouts the pre-pass uses these to size the tile
+    /// correctly the first time so there's no visible "set small →
+    /// grow" jump. Only applied when the window is alone in its lane
+    /// (single window per tile) — overlapping or stacked layouts use
+    /// best-effort sizing instead.
+    var observedMinSizes: [WindowId: CGSize] = [:]
 
     func laneWeight(lane: Int) -> CGFloat {
         guard lane >= 0, lane < shape.lanes else { return 1.0 }
