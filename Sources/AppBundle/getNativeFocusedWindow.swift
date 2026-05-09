@@ -69,16 +69,3 @@ private func withFocusedWindowTimeout(
     }
 }
 
-private final class ResumeOnceGuard: @unchecked Sendable {
-    private let lock = NSLock()
-    private var done = false
-    /// Atomically transition `done` from false → true. Returns true on
-    /// the first call, false on every subsequent call.
-    func tryClaim() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if done { return false }
-        done = true
-        return true
-    }
-}
