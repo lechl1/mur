@@ -14,8 +14,6 @@ struct GridResizeTest {
         let layout = GridLayout(shape: .landscapeDefault)
         layout.place(1, at: .single(lane: 0, slot: 0))
         layout.place(2, at: .single(lane: 0, slot: 1))
-        // Initial split: 300/300. User drags window 1's bottom edge from
-        // y=300 down to y=400 — slot 0 should grow by 100/600 = 1/6 of total.
         let last = Rect(topLeftX: 0, topLeftY: 0, width: 900, height: 300)
         let cur  = Rect(topLeftX: 0, topLeftY: 0, width: 900, height: 400)
         let result = GridResize.snap(.init(
@@ -23,38 +21,43 @@ struct GridResizeTest {
             lastAppliedRect: last, currentRect: cur,
             available: landscapeAvail, innerGap: 0,
         ))
-        #expect(result?.lane == 0)
-        // weights start [1,1] (total=2). Delta = (100/600)*2 = 0.333…
-        // → [1.333…, 0.666…]
-        #expect(abs((result?.weights[0] ?? 0) - 1.3333) < 0.01)
-        #expect(abs((result?.weights[1] ?? 0) - 0.6666) < 0.01)
+        #expect(result?.slotLane == 0)
+        let w = result?.slotWeights ?? []
+        #expect(abs(w[0] - 1.3333) < 0.01)
+        #expect(abs(w[1] - 0.6666) < 0.01)
+        #expect(result?.laneWeights == nil) // no lane-axis drag here
     }
 
-    @Test func landscapeHorizontalDragIsRigidNoOp() {
+    @Test func landscapeRightDragGrowsCurrentLane() {
+        // NEW: lane-axis drag is no longer a no-op. AeroSpace-style:
+        // dragging the right edge grows the current column and shrinks
+        // the next USED column.
         let layout = GridLayout(shape: .landscapeDefault)
-        layout.place(1, at: .single(lane: 0, slot: 0))
-        layout.place(2, at: .single(lane: 0, slot: 1))
-        // User drags right edge horizontally only — no slot-axis change
-        // in landscape → no-op.
-        let last = Rect(topLeftX: 0, topLeftY: 0, width: 300, height: 300)
-        let cur  = Rect(topLeftX: 0, topLeftY: 0, width: 450, height: 300)
+        // 2 lanes used (0 and 1) → each starts at width 450 in 900px.
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        let last = Rect(topLeftX: 0, topLeftY: 0, width: 450, height: 600)
+        let cur  = Rect(topLeftX: 0, topLeftY: 0, width: 600, height: 600)
         let result = GridResize.snap(.init(
             layout: layout, windowId: 1,
             lastAppliedRect: last, currentRect: cur,
             available: landscapeAvail, innerGap: 0,
         ))
-        #expect(result == nil)
+        // delta = (150 / 900) * 2 = 0.333. Lane 0 gains, lane 1 loses.
+        let lw = result?.laneWeights ?? []
+        #expect(lw.count == 3)
+        #expect(abs(lw[0] - 1.3333) < 0.01)
+        #expect(abs(lw[1] - 0.6666) < 0.01)
+        #expect(lw[2] == 1.0) // lane 2 unused, weight unchanged
+        #expect(result?.slotLane == nil) // no slot-axis drag
     }
 
     // MARK: portrait — axes flip
 
     @Test func portraitRightDragGrowsSlotZero() {
         let layout = GridLayout(shape: .portraitDefault)
-        // Lane 0 is the top ROW (rigid); slots within it are columns.
         layout.place(1, at: .single(lane: 0, slot: 0))
         layout.place(2, at: .single(lane: 0, slot: 1))
-        // In portrait, slot axis = X. User drags window 1's right edge
-        // from x=300 right to x=400.
         let last = Rect(topLeftX: 0, topLeftY: 0, width: 300, height: 300)
         let cur  = Rect(topLeftX: 0, topLeftY: 0, width: 400, height: 300)
         let result = GridResize.snap(.init(
@@ -62,28 +65,31 @@ struct GridResizeTest {
             lastAppliedRect: last, currentRect: cur,
             available: portraitAvail, innerGap: 0,
         ))
-        #expect(result?.lane == 0)
-        // (100/600)*2 ≈ 0.333 transferred from slot 1 to slot 0.
-        #expect(abs((result?.weights[0] ?? 0) - 1.3333) < 0.01)
-        #expect(abs((result?.weights[1] ?? 0) - 0.6666) < 0.01)
+        #expect(result?.slotLane == 0)
+        let w = result?.slotWeights ?? []
+        #expect(abs(w[0] - 1.3333) < 0.01)
+        #expect(abs(w[1] - 0.6666) < 0.01)
     }
 
-    @Test func portraitVerticalDragIsRigidNoOp() {
+    @Test func portraitBottomDragGrowsCurrentLane() {
+        // In portrait, lane axis = Y. Bottom drag grows current row (lane).
         let layout = GridLayout(shape: .portraitDefault)
-        layout.place(1, at: .single(lane: 0, slot: 0))
-        layout.place(2, at: .single(lane: 0, slot: 1))
-        let last = Rect(topLeftX: 0, topLeftY: 0, width: 300, height: 300)
-        let cur  = Rect(topLeftX: 0, topLeftY: 100, width: 300, height: 200) // top moved down
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        let last = Rect(topLeftX: 0, topLeftY: 0, width: 600, height: 450)
+        let cur  = Rect(topLeftX: 0, topLeftY: 0, width: 600, height: 600)
         let result = GridResize.snap(.init(
             layout: layout, windowId: 1,
             lastAppliedRect: last, currentRect: cur,
             available: portraitAvail, innerGap: 0,
         ))
-        // Top edge change is along the LANE axis in portrait → no-op.
-        #expect(result == nil)
+        let lw = result?.laneWeights ?? []
+        #expect(lw.count == 3)
+        #expect(abs(lw[0] - 1.3333) < 0.01)
+        #expect(abs(lw[1] - 0.6666) < 0.01)
     }
 
-    // MARK: jitter and single-slot lanes
+    // MARK: jitter and edge cases
 
     @Test func subPixelJitterIgnored() {
         let layout = GridLayout(shape: .landscapeDefault)
@@ -109,7 +115,8 @@ struct GridResizeTest {
             lastAppliedRect: last, currentRect: cur,
             available: landscapeAvail, innerGap: 0,
         ))
-        // Lane has only 1 slot → no neighbour to take weight from.
+        // Slot drag (bottom) but only 1 slot AND only 1 used lane →
+        // both slot and lane redistribution can't happen.
         #expect(result == nil)
     }
 }

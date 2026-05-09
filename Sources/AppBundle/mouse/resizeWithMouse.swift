@@ -69,8 +69,13 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
                     available: available,
                     innerGap: slotGap,
                 )
-                if let snap = GridResize.snap(sample) {
-                    workspace.gridLayout.setSlotWeights(lane: snap.lane, weights: snap.weights)
+                if let result = GridResize.snap(sample) {
+                    if let lane = result.slotLane, let w = result.slotWeights {
+                        workspace.gridLayout.setSlotWeights(lane: lane, weights: w)
+                    }
+                    if let lw = result.laneWeights {
+                        workspace.gridLayout.setLaneWeights(lw)
+                    }
                 }
                 currentlyManipulatedWithMouseWindowId = window.windowId
                 return

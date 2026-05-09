@@ -25,7 +25,7 @@ import Common
 /// `gridLayout.isEmpty == false`. The tree binding becomes dormant until
 /// phase 3 deletes it.
 @MainActor
-func tryRegisterInGridLayout(_ window: Window) async throws {
+func tryRegisterInGridLayout(_ window: Window) {
     guard config.experimentalGridLayout else { return }
     guard let workspace = window.nodeWorkspace else { return }
 
@@ -43,23 +43,32 @@ func tryRegisterInGridLayout(_ window: Window) async throws {
             break
     }
 
+    // IMPORTANT: this runs from MacWindow.getOrRegister during startup
+    // heavy refresh, when EVERY existing window is processed. Any AX
+    // call we make here can block the entire daemon if a single app's
+    // AX is unresponsive. So this function is strictly sync — no
+    // `await`, no AX reads beyond what `window.app.rawAppBundleId`
+    // (cached) and `gridLayout.placements` (in-memory) need.
+    //
+    // Consequence: WindowMemory is keyed by (appId, "") at registration
+    // time — per-app memory, not per-window-title. Title precision is
+    // restored when the user explicitly places via `mur grid-place` /
+    // `mur grid-move`, which run outside the startup hot path and
+    // can safely await window.title there.
     let appId = window.app.rawAppBundleId ?? ""
-    // Title fetch can throw or return nil if the AX request races the
-    // window's full initialisation. Treat any failure as "no title yet"
-    // and use an empty string — that still gives per-app memory.
-    let title = (try? await window.title) ?? ""
     let shape = workspace.gridLayout.shape
 
     let span: TileSpan
-    if let recalled = windowMemory.recall(appId: appId, title: title, shape: shape) {
+    if let recalled = windowMemory.recall(appId: appId, title: "", shape: shape) {
         span = recalled
     } else {
-        // Anchor the heuristic to the focused tiled window's lane if any.
-        let focusedLane = workspace.gridLayout.placements[
-            (try? await getNativeFocusedWindow())?.windowId ?? 0
-        ]?.lane
+        // Anchor the heuristic to the focused tiled window's lane if
+        // any. Uses the cached `focus` (sync) instead of
+        // getNativeFocusedWindow() (async + AX-bound).
+        let focusedLane = focus.windowOrNil
+            .flatMap { workspace.gridLayout.placements[$0.windowId]?.lane }
         span = workspace.gridLayout.placementForNewWindow(focusedLane: focusedLane)
-        windowMemory.remember(appId: appId, title: title, shape: shape, span: span)
+        windowMemory.remember(appId: appId, title: "", shape: shape, span: span)
         windowMemory.save()
     }
     workspace.gridLayout.place(window.windowId, at: span)

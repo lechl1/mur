@@ -174,6 +174,26 @@ final class GridLayout {
             .map(\.key)
     }
 
+    // MARK: Lane weights
+
+    /// Per-lane weight along the LANE axis (column widths in landscape,
+    /// row heights in portrait). Default 1.0 each — equal partition.
+    /// Mutated by mouse-resize on the lane-axis edges (left/right in
+    /// landscape, top/bottom in portrait), AeroSpace-style.
+    /// Stored separately from `slotWeights` because slots are per-lane;
+    /// these weights are workspace-level.
+    private var _laneWeights: [CGFloat]?
+
+    func laneWeight(lane: Int) -> CGFloat {
+        guard lane >= 0, lane < shape.lanes else { return 1.0 }
+        return _laneWeights?[lane] ?? 1.0
+    }
+
+    func setLaneWeights(_ weights: [CGFloat]) {
+        guard weights.count == shape.lanes, weights.allSatisfy({ $0 > 0 }) else { return }
+        _laneWeights = weights
+    }
+
     // MARK: Slot weights
 
     func slotWeight(lane: Int, slot: Int) -> CGFloat {
@@ -210,8 +230,10 @@ extension GridLayout {
     /// workspace rect; `innerGap` separates adjacent USED lanes and
     /// adjacent slots within a lane.
     ///
-    /// Empty lanes collapse: only `usedLanes` are rendered, equal extent
-    /// along the lane axis.
+    /// Empty lanes collapse: only `usedLanes` are rendered. Used lanes
+    /// are partitioned by per-lane weights (default 1.0 = equal). The
+    /// AeroSpace-style mouse-resize on lane-axis edges mutates these
+    /// per-lane weights via `setLaneWeights`.
     func resolveRect(
         for windowId: WindowId,
         in available: Rect,
@@ -222,9 +244,12 @@ extension GridLayout {
         guard !used.isEmpty else { return nil }
         guard let visIdx = used.firstIndex(of: span.lane) else { return nil }
 
-        // Lane axis: equal partition of `available` along the lane axis.
+        // Lane axis: weighted partition over USED lanes only.
         let nLanes = CGFloat(used.count)
         let totalLaneGap = max(0, nLanes - 1) * innerGap
+        let usedLaneWeights = used.map { laneWeight(lane: $0) }
+        let totalLaneWeight = usedLaneWeights.reduce(0, +)
+        guard totalLaneWeight > 0 else { return nil }
 
         // Slot axis: weighted partition of the lane.
         let slots = slotCount(in: span.lane)
@@ -238,9 +263,15 @@ extension GridLayout {
         switch shape.orientation {
             case .landscape:
                 // Lane axis = X, slot axis = Y.
-                let laneW = (available.width - totalLaneGap) / nLanes
+                let usableW = available.width - totalLaneGap
                 let usableH = available.height - totalSlotGap
-                let x = available.topLeftX + CGFloat(visIdx) * (laneW + innerGap)
+                // Pixel offset of this lane along X = sum of weights of
+                // earlier used lanes proportional to usableW + gaps.
+                var x = available.topLeftX
+                for i in 0..<visIdx {
+                    x += usedLaneWeights[i] / totalLaneWeight * usableW + innerGap
+                }
+                let laneW = usedLaneWeights[visIdx] / totalLaneWeight * usableW
                 var y0 = available.topLeftY
                 for s in 0..<span.slot0 { y0 += weights[s] / totalWeight * usableH + innerGap }
                 var spanW: CGFloat = 0
@@ -249,9 +280,13 @@ extension GridLayout {
                 return Rect(topLeftX: x, topLeftY: y0, width: laneW, height: h)
             case .portrait:
                 // Lane axis = Y, slot axis = X.
-                let laneH = (available.height - totalLaneGap) / nLanes
+                let usableH = available.height - totalLaneGap
                 let usableW = available.width - totalSlotGap
-                let y = available.topLeftY + CGFloat(visIdx) * (laneH + innerGap)
+                var y = available.topLeftY
+                for i in 0..<visIdx {
+                    y += usedLaneWeights[i] / totalLaneWeight * usableH + innerGap
+                }
+                let laneH = usedLaneWeights[visIdx] / totalLaneWeight * usableH
                 var x0 = available.topLeftX
                 for s in 0..<span.slot0 { x0 += weights[s] / totalWeight * usableW + innerGap }
                 var spanW: CGFloat = 0

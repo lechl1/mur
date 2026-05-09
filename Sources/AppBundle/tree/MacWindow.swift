@@ -39,7 +39,9 @@ final class MacWindow: Window {
         }
         // mur — phase 1.4. Mirror the new window into its workspace's
         // GridLayout when the experimental flag is on. No-op otherwise.
-        try await tryRegisterInGridLayout(window)
+        // Strictly sync — see tryRegisterInGridLayout's note about the
+        // startup hot path and AX reentrancy hazards.
+        tryRegisterInGridLayout(window)
         return window
     }
 

@@ -2,7 +2,8 @@ import AppKit
 import Common
 
 /// Mouse-driven resize for tiled windows. Preserves AeroSpace's
-/// "drag any edge, the layout follows" feel.
+/// "drag any edge, the layout follows" feel — including the
+/// neighbouring-column resize when the user drags a lane-axis edge.
 ///
 /// Pipeline (matches AeroSpace's `resizeWithMouse`):
 ///   1. AX fires `kAXResizedNotification` — `resizedObs` enqueues a light
@@ -10,16 +11,18 @@ import Common
 ///   2. Diff `window.getAxRect()` against `lastAppliedLayoutPhysicalRect`
 ///      to learn which edges moved.
 ///   3. `GridResize.snap(...)` translates the drag into:
-///        - a new slot-weights vector for the affected lane, OR
-///        - nothing (drag was along the rigid lane axis — no-op).
-///   4. Caller applies via `layout.setSlotWeights(lane:weights:)` and
-///      schedules a refresh.
+///        - a new slot-weights vector for the affected lane, AND/OR
+///        - a new lane-weights vector (lane-axis drag).
+///   4. Caller applies via `layout.setSlotWeights(...)` and/or
+///      `layout.setLaneWeights(...)` and schedules a refresh.
 ///
 /// Axis mapping by orientation:
-///   - `.landscape`: lane axis = X (rigid), slot axis = Y. So top/bottom
-///     drags adjust slot weights; left/right drags are no-ops.
-///   - `.portrait`: lane axis = Y (rigid), slot axis = X. So left/right
-///     drags adjust slot weights; top/bottom drags are no-ops.
+///   - `.landscape`: lane axis = X, slot axis = Y. Left/right drags
+///     redistribute lane weights (column widths); top/bottom drags
+///     redistribute slot weights (row heights within the column).
+///   - `.portrait`: lane axis = Y, slot axis = X. Top/bottom drags
+///     redistribute lane weights (row heights); left/right drags
+///     redistribute slot weights (column widths within the row).
 ///
 /// Floating windows are out of scope — they keep AeroSpace's free-form
 /// pixel resize.
@@ -41,11 +44,16 @@ enum GridResize {
         let innerGap: CGFloat
     }
 
-    /// Returned from a successful slot-axis drag. Caller writes via
-    /// `layout.setSlotWeights(lane: snap.lane, weights: snap.weights)`.
-    struct SlotResize {
-        let lane: Int
-        let weights: [CGFloat]
+    /// Result of a successful drag. May carry slot weights, lane weights,
+    /// both (if user dragged a corner), or nil-result for no-op drags.
+    struct ResizeResult {
+        /// New slot-weights vector for `slotLane` (nil if no slot-axis drag).
+        let slotLane: Int?
+        let slotWeights: [CGFloat]?
+        /// New lane-weights vector for the whole layout (nil if no lane-axis drag).
+        let laneWeights: [CGFloat]?
+
+        var isEmpty: Bool { slotWeights == nil && laneWeights == nil }
     }
 
     /// Detect dragged edges, epsilon-tolerant.
@@ -58,62 +66,116 @@ enum GridResize {
         return e
     }
 
-    /// Compute the new slot-weights vector for the lane the dragged window
-    /// is in. Returns nil if no slot-axis drag occurred or the lane has
-    /// only 1 slot (nothing to redistribute).
-    static func snap(_ sample: DragSample) -> SlotResize? {
+    /// Compute new lane-weights and/or slot-weights from the drag.
+    /// Returns nil if nothing changed.
+    static func snap(_ sample: DragSample) -> ResizeResult? {
         guard let span = sample.layout.placements[sample.windowId] else { return nil }
         let edges = detectEdges(sample)
         if edges.isEmpty { return nil }
 
         let orientation = sample.layout.shape.orientation
-        // Slot-axis edges are the ones that adjust weights:
-        //   landscape → top/bottom; portrait → left/right.
-        let touchedLow: Bool
-        let touchedHigh: Bool
-        let axisExtent: CGFloat
-        let lowDelta: CGFloat
-        let highDelta: CGFloat
+
+        // Pull out per-axis touched flags + raw deltas. Convention:
+        //   *Low  = "low end" edge → top in landscape Y / left in portrait X.
+        //   *High = "high end" edge → bottom or right.
+        //   delta > 0 → window grew on that edge (edge moved outward).
+        let slotLow: Bool, slotHigh: Bool
+        let laneLow: Bool, laneHigh: Bool
+        let slotAxisExtent: CGFloat, laneAxisExtent: CGFloat
+        let slotLowDelta: CGFloat, slotHighDelta: CGFloat
+        let laneLowDelta: CGFloat, laneHighDelta: CGFloat
         switch orientation {
             case .landscape:
-                touchedLow = edges.contains(.top)
-                touchedHigh = edges.contains(.bottom)
-                axisExtent = sample.available.height
-                lowDelta = sample.lastAppliedRect.minY - sample.currentRect.minY  // up = +
-                highDelta = sample.currentRect.maxY - sample.lastAppliedRect.maxY // down = +
+                slotLow  = edges.contains(.top)
+                slotHigh = edges.contains(.bottom)
+                laneLow  = edges.contains(.left)
+                laneHigh = edges.contains(.right)
+                slotAxisExtent = sample.available.height
+                laneAxisExtent = sample.available.width
+                slotLowDelta  = sample.lastAppliedRect.minY - sample.currentRect.minY
+                slotHighDelta = sample.currentRect.maxY - sample.lastAppliedRect.maxY
+                laneLowDelta  = sample.lastAppliedRect.minX - sample.currentRect.minX
+                laneHighDelta = sample.currentRect.maxX - sample.lastAppliedRect.maxX
             case .portrait:
-                touchedLow = edges.contains(.left)
-                touchedHigh = edges.contains(.right)
-                axisExtent = sample.available.width
-                lowDelta = sample.lastAppliedRect.minX - sample.currentRect.minX  // left = +
-                highDelta = sample.currentRect.maxX - sample.lastAppliedRect.maxX // right = +
-        }
-        if !touchedLow && !touchedHigh { return nil } // Lane-axis drag → rigid no-op.
-
-        let lane = span.lane
-        let slots = sample.layout.slotCount(in: lane)
-        guard slots > 1 else { return nil }
-
-        var weights: [CGFloat] = []
-        for s in 0..<slots { weights.append(sample.layout.slotWeight(lane: lane, slot: s)) }
-        let total = weights.reduce(0, +)
-        guard total > 0 else { return nil }
-
-        let totalSlotGap = max(0, CGFloat(slots - 1)) * sample.innerGap
-        let usable = axisExtent - totalSlotGap
-        guard usable > 0 else { return nil }
-
-        if touchedLow, span.slot0 > 0 {
-            // Drag low-edge outward (+) → take from prev slot, give to slot0.
-            let weightDelta = (lowDelta / usable) * total
-            transfer(&weights, from: span.slot0 - 1, to: span.slot0, delta: weightDelta)
-        }
-        if touchedHigh, span.slot1 < slots - 1 {
-            let weightDelta = (highDelta / usable) * total
-            transfer(&weights, from: span.slot1 + 1, to: span.slot1, delta: weightDelta)
+                slotLow  = edges.contains(.left)
+                slotHigh = edges.contains(.right)
+                laneLow  = edges.contains(.top)
+                laneHigh = edges.contains(.bottom)
+                slotAxisExtent = sample.available.width
+                laneAxisExtent = sample.available.height
+                slotLowDelta  = sample.lastAppliedRect.minX - sample.currentRect.minX
+                slotHighDelta = sample.currentRect.maxX - sample.lastAppliedRect.maxX
+                laneLowDelta  = sample.lastAppliedRect.minY - sample.currentRect.minY
+                laneHighDelta = sample.currentRect.maxY - sample.lastAppliedRect.maxY
         }
 
-        return SlotResize(lane: lane, weights: weights)
+        // -- slot-axis transfer (within current lane) ---------------
+        var resultSlotLane: Int? = nil
+        var resultSlotWeights: [CGFloat]? = nil
+        if slotLow || slotHigh {
+            let lane = span.lane
+            let slots = sample.layout.slotCount(in: lane)
+            if slots > 1 {
+                var weights: [CGFloat] = []
+                for s in 0..<slots { weights.append(sample.layout.slotWeight(lane: lane, slot: s)) }
+                let total = weights.reduce(0, +)
+                let usable = slotAxisExtent - max(0, CGFloat(slots - 1)) * sample.innerGap
+                if total > 0 && usable > 0 {
+                    if slotLow, span.slot0 > 0 {
+                        let d = (slotLowDelta / usable) * total
+                        transfer(&weights, from: span.slot0 - 1, to: span.slot0, delta: d)
+                    }
+                    if slotHigh, span.slot1 < slots - 1 {
+                        let d = (slotHighDelta / usable) * total
+                        transfer(&weights, from: span.slot1 + 1, to: span.slot1, delta: d)
+                    }
+                    resultSlotLane = lane
+                    resultSlotWeights = weights
+                }
+            }
+        }
+
+        // -- lane-axis transfer (across used lanes) ------------------
+        // AeroSpace-style: dragging the right edge of a window grows
+        // its column and shrinks the column to its right (and v.v.).
+        // We operate on the USED-LANES partition; transfers happen
+        // between the dragged window's lane and the immediate
+        // visible-neighbour lane on the dragged side.
+        var resultLaneWeights: [CGFloat]? = nil
+        if laneLow || laneHigh {
+            let used = sample.layout.usedLanes
+            if let visIdx = used.firstIndex(of: span.lane) {
+                var weights: [CGFloat] = []
+                for l in 0..<sample.layout.shape.lanes {
+                    weights.append(sample.layout.laneWeight(lane: l))
+                }
+                // Sum across USED lanes only — that's what the visible
+                // partition uses, so deltas in pixels translate to
+                // deltas in this sum.
+                let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
+                let usable = laneAxisExtent - max(0, CGFloat(used.count - 1)) * sample.innerGap
+                if usedTotal > 0 && usable > 0 {
+                    if laneLow, visIdx > 0 {
+                        // Drag low-edge outward → grow current lane,
+                        // shrink the previous USED lane.
+                        let d = (laneLowDelta / usable) * usedTotal
+                        transfer(&weights, from: used[visIdx - 1], to: used[visIdx], delta: d)
+                    }
+                    if laneHigh, visIdx < used.count - 1 {
+                        let d = (laneHighDelta / usable) * usedTotal
+                        transfer(&weights, from: used[visIdx + 1], to: used[visIdx], delta: d)
+                    }
+                    resultLaneWeights = weights
+                }
+            }
+        }
+
+        let result = ResizeResult(
+            slotLane: resultSlotLane,
+            slotWeights: resultSlotWeights,
+            laneWeights: resultLaneWeights,
+        )
+        return result.isEmpty ? nil : result
     }
 
     /// Move `delta` weight from index `from` to index `to`. Floors at
