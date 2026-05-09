@@ -10,13 +10,13 @@
 // "Nearest" means: smallest lane-delta (or slot-delta) in the requested
 // direction. Ties on distance are broken by zOrder — the topmost
 // candidate wins.
-public struct GridFocusDirCmdArgs: CmdArgs {
+public struct StackingFocusDirCmdArgs: CmdArgs {
     /*conforms*/ public var commonState: CmdArgsCommonState
     init(rawArgs: StrArrSlice) { self.commonState = .init(rawArgs) }
     public static let parser: CmdParser<Self> = .init(
-        kind: .gridFocusDir,
+        kind: .stackingFocusDir,
         allowInConfig: true,
-        help: grid_focus_dir_help_generated,
+        help: stacking_focus_dir_help_generated,
         flags: [
             "--workspace": workspaceSubArgParser(),
         ],

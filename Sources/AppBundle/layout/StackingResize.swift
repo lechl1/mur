@@ -10,7 +10,7 @@ import Common
 ///      session if `isManipulatedWithMouse`.
 ///   2. Diff `window.getAxRect()` against `lastAppliedLayoutPhysicalRect`
 ///      to learn which edges moved.
-///   3. `GridResize.snap(...)` translates the drag into:
+///   3. `StackingResize.snap(...)` translates the drag into:
 ///        - a new slot-weights vector for the affected lane, AND/OR
 ///        - a new lane-weights vector (lane-axis drag).
 ///   4. Caller applies via `layout.setSlotWeights(...)` and/or
@@ -26,7 +26,7 @@ import Common
 ///
 /// Floating windows are out of scope — they keep AeroSpace's free-form
 /// pixel resize.
-enum GridResize {
+enum StackingResize {
     struct Edges: OptionSet {
         let rawValue: Int
         static let left   = Edges(rawValue: 1 << 0)
@@ -36,7 +36,7 @@ enum GridResize {
     }
 
     struct DragSample {
-        let layout: GridLayout
+        let layout: StackingLayout
         let windowId: WindowId
         let lastAppliedRect: Rect
         let currentRect: Rect

@@ -2,24 +2,24 @@ import AppKit
 import Common
 import Foundation
 
-/// `mur grid-focus-dir <left|down|up|right>` — focus the spatial
+/// `mur stacking-focus-dir <left|down|up|right>` — focus the spatial
 /// neighbor of the currently-focused window inside the grid layout.
-struct GridFocusDirCommand: Command {
-    let args: GridFocusDirCmdArgs
+struct StackingFocusDirCommand: Command {
+    let args: StackingFocusDirCmdArgs
     /*conforms*/ let shouldResetClosedWindowsCache = false
 
     func run(_ env: CmdEnv, _ io: CmdIo) -> BinaryExitCode {
-        guard config.experimentalGridLayout else {
-            io.err("grid-focus-dir requires `experimental-grid-layout = true` in mur.toml")
+        guard config.experimentalStackingLayout else {
+            io.err("stacking-focus-dir requires `experimental-stacking-layout = true` in mur.toml")
             return .fail
         }
         guard let target = args.resolveTargetOrReportError(env, io) else { return .fail }
         guard let window = target.windowOrNil else {
-            io.err("grid-focus-dir needs a focused window")
+            io.err("stacking-focus-dir needs a focused window")
             return .fail
         }
         let workspace = target.workspace
-        let layout = workspace.gridLayout
+        let layout = workspace.stackingLayout
         guard let current = layout.placements[window.windowId] else {
             io.err("focused window \(window.windowId) is not in the grid")
             return .fail

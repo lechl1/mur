@@ -2,22 +2,22 @@ import AppKit
 import Common
 import Foundation
 
-/// `mur grid-focus <lane> <slot>` — focus the topmost window whose
+/// `mur stacking-focus <lane> <slot>` — focus the topmost window whose
 /// `TileSpan` covers `(lane, slot)`. If no window is at that cell,
 /// errors out without changing focus. Promotes the focused window to
 /// the top of zOrder so it'll be the topmost on next refresh.
-struct GridFocusCommand: Command {
-    let args: GridFocusCmdArgs
+struct StackingFocusCommand: Command {
+    let args: StackingFocusCmdArgs
     /*conforms*/ let shouldResetClosedWindowsCache = false
 
     func run(_ env: CmdEnv, _ io: CmdIo) -> BinaryExitCode {
-        guard config.experimentalGridLayout else {
-            io.err("grid-focus requires `experimental-grid-layout = true` in mur.toml")
+        guard config.experimentalStackingLayout else {
+            io.err("stacking-focus requires `experimental-stacking-layout = true` in mur.toml")
             return .fail
         }
         guard let target = args.resolveTargetOrReportError(env, io) else { return .fail }
         let workspace = target.workspace
-        let layout = workspace.gridLayout
+        let layout = workspace.stackingLayout
         let lane = args.lane.val
         let slot = args.slot.val
 

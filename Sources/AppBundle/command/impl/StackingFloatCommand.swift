@@ -2,28 +2,28 @@ import AppKit
 import Common
 import Foundation
 
-/// `mur grid-float` — pull the focused (or `--window-id`) window out
+/// `mur stacking-float` — pull the focused (or `--window-id`) window out
 /// of the workspace's grid and re-bind it as floating. Also forgets
 /// the matching `WindowMemory` entry so a subsequent reopen of the
 /// same app+title doesn't auto-restore into the grid.
 ///
-/// To re-tile a floating window, run `mur grid-place <lane> <slot0> <slot1>`.
-struct GridFloatCommand: Command {
-    let args: GridFloatCmdArgs
+/// To re-tile a floating window, run `mur stacking-place <lane> <slot0> <slot1>`.
+struct StackingFloatCommand: Command {
+    let args: StackingFloatCmdArgs
     /*conforms*/ let shouldResetClosedWindowsCache = false
 
     func run(_ env: CmdEnv, _ io: CmdIo) -> BinaryExitCode {
-        guard config.experimentalGridLayout else {
-            io.err("grid-float requires `experimental-grid-layout = true` in mur.toml")
+        guard config.experimentalStackingLayout else {
+            io.err("stacking-float requires `experimental-stacking-layout = true` in mur.toml")
             return .fail
         }
         guard let target = args.resolveTargetOrReportError(env, io) else { return .fail }
         guard let window = target.windowOrNil else {
-            io.err("grid-float needs a focused window or --window-id <id>")
+            io.err("stacking-float needs a focused window or --window-id <id>")
             return .fail
         }
         let workspace = target.workspace
-        let layout = workspace.gridLayout
+        let layout = workspace.stackingLayout
         guard layout.placements[window.windowId] != nil else {
             io.err("window \(window.windowId) is not in the grid (already floating or unmanaged)")
             return .fail

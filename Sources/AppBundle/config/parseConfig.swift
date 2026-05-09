@@ -126,7 +126,7 @@ private let configParser: [String: any ParserProtocol<Config>] = [
     "on-window-detected": Parser(\.onWindowDetected, parseOnWindowDetectedArray),
 
     // mur — phase 1 feature flag (see docs/MUR_DESIGN.md)
-    "experimental-grid-layout": Parser(\.experimentalGridLayout, parseBool),
+    "experimental-stacking-layout": Parser(\.experimentalStackingLayout, parseBool),
 
     // Deprecated
     "non-empty-workspaces-root-containers-layout-on-startup": Parser(\._nonEmptyWorkspacesRootContainersLayoutOnStartup, parseStartupRootContainerLayout),

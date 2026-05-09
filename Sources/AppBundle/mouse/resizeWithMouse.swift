@@ -50,31 +50,31 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
 
             // mur — phase 1.5 grid resize path. When the experimental
             // grid is on AND this window is registered in the workspace's
-            // gridLayout, redistribute slot weights via GridResize.snap
+            // stackingLayout, redistribute slot weights via StackingResize.snap
             // instead of mutating the tree's adaptive weights.
-            if config.experimentalGridLayout,
+            if config.experimentalStackingLayout,
                let workspace = window.nodeWorkspace,
-               workspace.gridLayout.placements[window.windowId] != nil
+               workspace.stackingLayout.placements[window.windowId] != nil
             {
                 let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
                 let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
                 let slotGap = CGFloat(resolved.inner.get(
-                    workspace.gridLayout.shape.orientation == .landscape ? .v : .h,
+                    workspace.stackingLayout.shape.orientation == .landscape ? .v : .h,
                 ))
-                let sample = GridResize.DragSample(
-                    layout: workspace.gridLayout,
+                let sample = StackingResize.DragSample(
+                    layout: workspace.stackingLayout,
                     windowId: window.windowId,
                     lastAppliedRect: lastAppliedLayoutRect,
                     currentRect: rect,
                     available: available,
                     innerGap: slotGap,
                 )
-                if let result = GridResize.snap(sample) {
+                if let result = StackingResize.snap(sample) {
                     if let lane = result.slotLane, let w = result.slotWeights {
-                        workspace.gridLayout.setSlotWeights(lane: lane, weights: w)
+                        workspace.stackingLayout.setSlotWeights(lane: lane, weights: w)
                     }
                     if let lw = result.laneWeights {
-                        workspace.gridLayout.setLaneWeights(lw)
+                        workspace.stackingLayout.setLaneWeights(lw)
                     }
                     // mur — advance the baseline to the currently sampled
                     // rect. The layout pass SKIPS the dragged window

@@ -38,10 +38,10 @@ final class MacWindow: Window {
             try await tryOnWindowDetected(window)
         }
         // mur — phase 1.4. Mirror the new window into its workspace's
-        // GridLayout when the experimental flag is on. No-op otherwise.
-        // Strictly sync — see tryRegisterInGridLayout's note about the
+        // StackingLayout when the experimental flag is on. No-op otherwise.
+        // Strictly sync — see tryRegisterInStackingLayout's note about the
         // startup hot path and AX reentrancy hazards.
-        tryRegisterInGridLayout(window)
+        tryRegisterInStackingLayout(window)
         return window
     }
 
@@ -84,11 +84,11 @@ final class MacWindow: Window {
         if MacWindow.allWindowsMap.removeValue(forKey: windowId) == nil {
             return
         }
-        // mur — drop the dead window from any workspace's gridLayout
+        // mur — drop the dead window from any workspace's stackingLayout
         // so `compactGaps()` runs and the freed lane / slot collapses.
-        if config.experimentalGridLayout {
-            for workspace in Workspace.all where workspace.gridLayout.placements[windowId] != nil {
-                _ = workspace.gridLayout.remove(windowId)
+        if config.experimentalStackingLayout {
+            for workspace in Workspace.all where workspace.stackingLayout.placements[windowId] != nil {
+                _ = workspace.stackingLayout.remove(windowId)
             }
         }
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
