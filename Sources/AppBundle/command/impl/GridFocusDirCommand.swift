@@ -44,14 +44,24 @@ struct GridFocusDirCommand: Command {
 
         // Distance from the current span to a candidate span in the chosen
         // axis + signum. Returns nil if the candidate isn't in the half-plane.
+        // For lane-axis search we measure between the *outer* lanes of each
+        // span: from `current.lane1` to `span.lane0` going right (signum>0)
+        // and from `current.lane0` to `span.lane1` going left.
+        // For slot-axis search the candidate must overlap the current span
+        // along the lane axis.
         func distance(to span: TileSpan) -> Int? {
             switch axis {
                 case .lane:
-                    let delta = signum > 0 ? span.lane - current.lane : current.lane - span.lane
+                    let delta = signum > 0
+                        ? span.lane0 - current.lane1
+                        : current.lane0 - span.lane1
                     return delta > 0 ? delta : nil
                 case .slot:
-                    if span.lane != current.lane { return nil }
-                    let delta = signum > 0 ? span.slot0 - current.slot1 : current.slot0 - span.slot1
+                    let laneOverlap = max(span.lane0, current.lane0) <= min(span.lane1, current.lane1)
+                    if !laneOverlap { return nil }
+                    let delta = signum > 0
+                        ? span.slot0 - current.slot1
+                        : current.slot0 - span.slot1
                     return delta > 0 ? delta : nil
             }
         }

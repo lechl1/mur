@@ -123,6 +123,53 @@ struct GridLayoutTest {
         #expect(span == .single(lane: 1, slot: 1))
     }
 
+    // MARK: multi-lane spans (TileSpan generalization)
+
+    @Test func multiLaneSpanWidthCoversBothLanes() {
+        // Single window spanning lanes 0..1 in landscape — its rect should
+        // cover the union of both lanes' widths (no third lane in use).
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: TileSpan(lane0: 0, lane1: 1, slot0: 0, slot1: 0))
+        let r = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        // Two USED lanes with default weights → 50/50 split. Span covers
+        // both → full 900px width, full 600px height.
+        #expect(r?.width == 900)
+        #expect(r?.height == 600)
+        #expect(r?.topLeftX == 0)
+    }
+
+    @Test func multiLaneSpanWithThirdLaneSibling() {
+        // 3 lanes used; window 1 spans lanes 0..1, window 2 occupies lane 2.
+        // Default lane weights → each lane is 300px wide. Window 1 → 600px,
+        // window 2 → 300px.
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: TileSpan(lane0: 0, lane1: 1, slot0: 0, slot1: 0))
+        layout.place(2, at: .soleSlot(lane: 2))
+        let r1 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        let r2 = layout.resolveRect(for: 2, in: landscapeAvail, innerGap: 0)
+        #expect(r1?.width == 600)
+        #expect(r1?.topLeftX == 0)
+        #expect(r2?.width == 300)
+        #expect(r2?.topLeftX == 600)
+    }
+
+    @Test func multiLaneSpanContributesToUsedLanes() {
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: TileSpan(lane0: 0, lane1: 2, slot0: 0, slot1: 0))
+        #expect(layout.usedLanes == [0, 1, 2])
+        #expect(layout.emptyLanes == [])
+    }
+
+    @Test func backwardCompatibleSingleLaneInit() {
+        // The legacy `init(lane:slot0:slot1:)` should still produce
+        // `lane0 == lane1` spans.
+        let span = TileSpan(lane: 1, slot0: 0, slot1: 0)
+        #expect(span.lane0 == 1)
+        #expect(span.lane1 == 1)
+        #expect(span.isSingleLane)
+        #expect(span.laneCount == 1)
+    }
+
     // MARK: zOrder
 
     @Test func placePromotesToTopOfZOrder() {

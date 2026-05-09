@@ -38,34 +38,51 @@ struct LayoutShape: Equatable, Hashable, Codable {
 
 // MARK: - TileSpan
 
-/// A contiguous run of slots in a single lane.
+/// A rectangular span of cells in the grid: `lane0..lane1` along the
+/// rigid lane axis, `slot0..slot1` along the flexible slot axis.
 ///
-/// Naming is orientation-neutral: in landscape, `lane` is a column and
-/// `slot0..slot1` are rows within that column; in portrait, `lane` is a
-/// row and `slot0..slot1` are columns within that row.
+/// Naming is orientation-neutral: in landscape, lanes are columns and
+/// slots are rows; in portrait, lanes are rows and slots are columns.
+/// Single-lane spans (the common case) have `lane0 == lane1`. Multi-lane
+/// spans cover a contiguous run of lanes — used by `grid-move` to grow a
+/// window from 1 → 2 → 3 lanes as it moves toward an edge.
 struct TileSpan: Equatable, Hashable {
-    let lane: Int
+    let lane0: Int
+    let lane1: Int
     let slot0: Int
     let slot1: Int
 
-    init(lane: Int, slot0: Int, slot1: Int) {
+    init(lane0: Int, lane1: Int, slot0: Int, slot1: Int) {
+        precondition(lane0 <= lane1, "TileSpan: lane0 (\(lane0)) must be <= lane1 (\(lane1))")
         precondition(slot0 <= slot1, "TileSpan: slot0 (\(slot0)) must be <= slot1 (\(slot1))")
-        self.lane = lane
+        self.lane0 = lane0
+        self.lane1 = lane1
         self.slot0 = slot0
         self.slot1 = slot1
     }
 
-    /// A single slot at `(lane, slot)`.
+    /// Backward-compatible single-lane initializer. Equivalent to
+    /// `TileSpan(lane0: lane, lane1: lane, slot0:..., slot1:...)`.
+    init(lane: Int, slot0: Int, slot1: Int) {
+        self.init(lane0: lane, lane1: lane, slot0: slot0, slot1: slot1)
+    }
+
+    /// A single cell at `(lane, slot)`.
     static func single(lane: Int, slot: Int) -> TileSpan {
-        TileSpan(lane: lane, slot0: slot, slot1: slot)
+        TileSpan(lane0: lane, lane1: lane, slot0: slot, slot1: slot)
     }
 
     /// First slot of a fresh lane — used for "place this window alone in this lane."
     static func soleSlot(lane: Int) -> TileSpan {
-        TileSpan(lane: lane, slot0: 0, slot1: 0)
+        TileSpan(lane0: lane, lane1: lane, slot0: 0, slot1: 0)
     }
 
+    /// Number of slots covered along the slot axis.
     var slotCount: Int { slot1 - slot0 + 1 }
+    /// Number of lanes covered along the lane axis.
+    var laneCount: Int { lane1 - lane0 + 1 }
+    /// True iff this span covers a single lane.
+    var isSingleLane: Bool { lane0 == lane1 }
 }
 
 // MARK: - GridLayout
@@ -96,17 +113,24 @@ final class GridLayout {
     // MARK: Mutation
 
     /// Place or move a window to `requested`. Slot indices below may exceed
-    /// the current `slotCount(in:)` — this implicitly grows the lane. The
-    /// window is promoted to the top of `zOrder`.
+    /// the current `slotCount(in:)` — this implicitly grows every covered
+    /// lane. The window is promoted to the top of `zOrder`.
     func place(_ windowId: WindowId, at requested: TileSpan) {
-        guard requested.lane >= 0 && requested.lane < shape.lanes else {
+        guard requested.lane0 >= 0, requested.lane1 < shape.lanes else {
             remove(windowId)
             return
         }
-        let oldLane = placements[windowId]?.lane
+        let oldSpan = placements[windowId]
         placements[windowId] = requested
-        ensureSlotWeightsCapacity(lane: requested.lane, upTo: requested.slot1)
-        if let old = oldLane, old != requested.lane { compactLaneIfNeeded(old) }
+        for lane in requested.lane0...requested.lane1 {
+            ensureSlotWeightsCapacity(lane: lane, upTo: requested.slot1)
+        }
+        // Compact any old-span lanes that the new span no longer covers.
+        if let old = oldSpan {
+            for lane in old.lane0...old.lane1 where lane < requested.lane0 || lane > requested.lane1 {
+                compactLaneIfNeeded(lane)
+            }
+        }
         zOrder.removeAll { $0 == windowId }
         zOrder.append(windowId)
     }
@@ -115,7 +139,7 @@ final class GridLayout {
     func remove(_ windowId: WindowId) -> TileSpan? {
         guard let span = placements.removeValue(forKey: windowId) else { return nil }
         zOrder.removeAll { $0 == windowId }
-        compactLaneIfNeeded(span.lane)
+        for lane in span.lane0...span.lane1 { compactLaneIfNeeded(lane) }
         return span
     }
 
@@ -126,13 +150,13 @@ final class GridLayout {
     }
 
     /// Switch shape (e.g. monitor rotated, or user changed lane count).
-    /// Returns evicted windows (those whose lane no longer fits).
+    /// Returns evicted windows (those whose lane range no longer fits).
     func reshape(to newShape: LayoutShape) -> [WindowId] {
         if newShape == shape { return [] }
         var evicted: [WindowId] = []
         var rebuilt: [WindowId: TileSpan] = [:]
         for (wid, span) in placements {
-            if span.lane < newShape.lanes {
+            if span.lane1 < newShape.lanes {
                 rebuilt[wid] = span
             } else {
                 evicted.append(wid)
@@ -149,8 +173,15 @@ final class GridLayout {
 
     // MARK: Queries
 
-    /// Lanes containing at least one window. Sorted ascending.
-    var usedLanes: [Int] { Set(placements.values.map(\.lane)).sorted() }
+    /// Lanes containing at least one window. Sorted ascending. A multi-lane
+    /// span contributes every lane it covers.
+    var usedLanes: [Int] {
+        var s: Set<Int> = []
+        for span in placements.values {
+            for lane in span.lane0...span.lane1 { s.insert(lane) }
+        }
+        return s.sorted()
+    }
 
     /// Lanes with no windows.
     var emptyLanes: [Int] {
@@ -158,10 +189,11 @@ final class GridLayout {
         return (0..<shape.lanes).filter { !used.contains($0) }
     }
 
-    /// Number of slots in a lane = `max(slot1) + 1` over its placements.
+    /// Number of slots in a lane = `max(slot1) + 1` over placements that
+    /// touch this lane (single- or multi-lane).
     func slotCount(in lane: Int) -> Int {
         var maxSlot = -1
-        for span in placements.values where span.lane == lane {
+        for span in placements.values where span.lane0 <= lane && lane <= span.lane1 {
             if span.slot1 > maxSlot { maxSlot = span.slot1 }
         }
         return maxSlot + 1
@@ -169,7 +201,7 @@ final class GridLayout {
 
     func windows(in lane: Int) -> [WindowId] {
         placements
-            .filter { $0.value.lane == lane }
+            .filter { $0.value.lane0 <= lane && lane <= $0.value.lane1 }
             .sorted { $0.value.slot0 < $1.value.slot0 }
             .map(\.key)
     }
@@ -253,7 +285,11 @@ extension GridLayout {
         guard let span = placements[windowId] else { return nil }
         let used = usedLanes
         guard !used.isEmpty else { return nil }
-        guard let visIdx = used.firstIndex(of: span.lane) else { return nil }
+        // A multi-lane span is anchored to its low/high lane in the visible
+        // partition. Both must be in `used` (they are by definition — they
+        // contain this very window).
+        guard let visIdx0 = used.firstIndex(of: span.lane0),
+              let visIdx1 = used.firstIndex(of: span.lane1) else { return nil }
 
         // Lane axis: weighted partition over USED lanes only.
         let nLanes = CGFloat(used.count)
@@ -262,48 +298,56 @@ extension GridLayout {
         let totalLaneWeight = usedLaneWeights.reduce(0, +)
         guard totalLaneWeight > 0 else { return nil }
 
-        // Slot axis: weighted partition of the lane.
-        let slots = slotCount(in: span.lane)
+        // Slot axis: weighted partition of `lane0` (canonical for multi-lane
+        // spans). All covered lanes are grown to at least `slot1+1` slots
+        // by `place(...)`, so `lane0`'s weights are well-defined.
+        let slots = slotCount(in: span.lane0)
         guard slots > 0, span.slot0 < slots, span.slot1 < slots else { return nil }
         var weights: [CGFloat] = []
-        for s in 0..<slots { weights.append(slotWeight(lane: span.lane, slot: s)) }
+        for s in 0..<slots { weights.append(slotWeight(lane: span.lane0, slot: s)) }
         let totalWeight = weights.reduce(0, +)
         guard totalWeight > 0 else { return nil }
         let totalSlotGap = max(0, CGFloat(slots - 1)) * innerGap
+
+        // Lane-axis prefix (weights up to span start) and extent (weights
+        // covered by the span). For single-lane spans this collapses to
+        // `extent = usedLaneWeights[visIdx0]`.
+        var lanePrefix: CGFloat = 0
+        for i in 0..<visIdx0 { lanePrefix += usedLaneWeights[i] }
+        var laneExtent: CGFloat = 0
+        for i in visIdx0...visIdx1 { laneExtent += usedLaneWeights[i] }
 
         switch shape.orientation {
             case .landscape:
                 // Lane axis = X, slot axis = Y.
                 let usableW = available.width - totalLaneGap
                 let usableH = available.height - totalSlotGap
-                // Pixel offset of this lane along X = sum of weights of
-                // earlier used lanes proportional to usableW + gaps.
-                var x = available.topLeftX
-                for i in 0..<visIdx {
-                    x += usedLaneWeights[i] / totalLaneWeight * usableW + innerGap
-                }
-                let laneW = usedLaneWeights[visIdx] / totalLaneWeight * usableW
+                let x = available.topLeftX
+                    + lanePrefix / totalLaneWeight * usableW
+                    + CGFloat(visIdx0) * innerGap
+                let laneSpanW = laneExtent / totalLaneWeight * usableW
+                    + CGFloat(visIdx1 - visIdx0) * innerGap
                 var y0 = available.topLeftY
                 for s in 0..<span.slot0 { y0 += weights[s] / totalWeight * usableH + innerGap }
-                var spanW: CGFloat = 0
-                for s in span.slot0...span.slot1 { spanW += weights[s] }
-                let h = spanW / totalWeight * usableH + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
-                return Rect(topLeftX: x, topLeftY: y0, width: laneW, height: h)
+                var spanH: CGFloat = 0
+                for s in span.slot0...span.slot1 { spanH += weights[s] }
+                let h = spanH / totalWeight * usableH + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
+                return Rect(topLeftX: x, topLeftY: y0, width: laneSpanW, height: h)
             case .portrait:
                 // Lane axis = Y, slot axis = X.
                 let usableH = available.height - totalLaneGap
                 let usableW = available.width - totalSlotGap
-                var y = available.topLeftY
-                for i in 0..<visIdx {
-                    y += usedLaneWeights[i] / totalLaneWeight * usableH + innerGap
-                }
-                let laneH = usedLaneWeights[visIdx] / totalLaneWeight * usableH
+                let y = available.topLeftY
+                    + lanePrefix / totalLaneWeight * usableH
+                    + CGFloat(visIdx0) * innerGap
+                let laneSpanH = laneExtent / totalLaneWeight * usableH
+                    + CGFloat(visIdx1 - visIdx0) * innerGap
                 var x0 = available.topLeftX
                 for s in 0..<span.slot0 { x0 += weights[s] / totalWeight * usableW + innerGap }
                 var spanW: CGFloat = 0
                 for s in span.slot0...span.slot1 { spanW += weights[s] }
                 let w = spanW / totalWeight * usableW + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
-                return Rect(topLeftX: x0, topLeftY: y, width: w, height: laneH)
+                return Rect(topLeftX: x0, topLeftY: y, width: w, height: laneSpanH)
         }
     }
 }

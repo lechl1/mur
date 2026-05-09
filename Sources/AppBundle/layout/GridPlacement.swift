@@ -66,7 +66,7 @@ func tryRegisterInGridLayout(_ window: Window) {
         // any. Uses the cached `focus` (sync) instead of
         // getNativeFocusedWindow() (async + AX-bound).
         let focusedLane = focus.windowOrNil
-            .flatMap { workspace.gridLayout.placements[$0.windowId]?.lane }
+            .flatMap { workspace.gridLayout.placements[$0.windowId]?.lane0 }
         span = workspace.gridLayout.placementForNewWindow(focusedLane: focusedLane)
         windowMemory.remember(appId: appId, title: "", shape: shape, span: span)
         windowMemory.save()

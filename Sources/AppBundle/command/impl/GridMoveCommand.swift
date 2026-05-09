@@ -36,29 +36,32 @@ struct GridMoveCommand: Command {
         }
 
         let shape = layout.shape
-        var newLane = current.lane
+        var newLane0 = current.lane0
+        var newLane1 = current.lane1
         var newSlot0 = current.slot0
         var newSlot1 = current.slot1
         switch args.direction.val {
             case .left:
-                newLane = max(0, current.lane - 1)
+                // Shift the whole lane range left by 1, clamped at the edge.
+                if current.lane0 > 0 {
+                    newLane0 = current.lane0 - 1
+                    newLane1 = current.lane1 - 1
+                }
             case .right:
-                newLane = min(shape.lanes - 1, current.lane + 1)
+                if current.lane1 < shape.lanes - 1 {
+                    newLane0 = current.lane0 + 1
+                    newLane1 = current.lane1 + 1
+                }
             case .up:
                 newSlot0 = max(0, current.slot0 - 1)
                 newSlot1 = newSlot0 + (current.slot1 - current.slot0)
             case .down:
                 // Past the bottom: extend the lane by appending a slot.
-                let lastSlot = layout.slotCount(in: current.lane) - 1
-                if current.slot1 >= lastSlot {
-                    newSlot0 = current.slot0 + 1
-                } else {
-                    newSlot0 = current.slot0 + 1
-                }
+                newSlot0 = current.slot0 + 1
                 newSlot1 = newSlot0 + (current.slot1 - current.slot0)
         }
 
-        let span = TileSpan(lane: newLane, slot0: newSlot0, slot1: newSlot1)
+        let span = TileSpan(lane0: newLane0, lane1: newLane1, slot0: newSlot0, slot1: newSlot1)
         layout.place(window.windowId, at: span)
         Task { @MainActor in
             let appId = window.app.rawAppBundleId ?? ""

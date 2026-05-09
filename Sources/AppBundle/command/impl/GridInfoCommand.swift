@@ -37,17 +37,15 @@ struct GridInfoCommand: Command {
         for windowId in layout.zOrder {
             guard let span = layout.placements[windowId] else { continue }
             let appName = Window.get(byId: windowId)?.app.name ?? "?"
-            // Show this window's lane's slot weights (they're per-lane, so
-            // duplicated across windows in the same lane — acceptable for
-            // a debug print).
-            let slots = layout.slotCount(in: span.lane)
+            // Show lane0's slot weights (canonical for multi-lane spans).
+            let slots = layout.slotCount(in: span.lane0)
             var weights: [String] = []
             for s in 0..<slots {
-                let w = layout.slotWeight(lane: span.lane, slot: s)
+                let w = layout.slotWeight(lane: span.lane0, slot: s)
                 weights.append(String(format: "%.2f", w))
             }
             let weightsStr = "[" + weights.joined(separator: ", ") + "]"
-            io.out("  [\(windowId)] lane=\(span.lane) slot0=\(span.slot0) slot1=\(span.slot1) weight=\(weightsStr) (\(appName))")
+            io.out("  [\(windowId)] lane0=\(span.lane0) lane1=\(span.lane1) slot0=\(span.slot0) slot1=\(span.slot1) weight=\(weightsStr) (\(appName))")
         }
         return .succ
     }

@@ -21,11 +21,14 @@ struct GridFocusCommand: Command {
         let lane = args.lane.val
         let slot = args.slot.val
 
-        // Walk zOrder back→front and pick the LAST (topmost) hit.
+        // Walk zOrder back→front and pick the LAST (topmost) hit. Multi-
+        // lane spans are hit when `lane` falls within `[lane0, lane1]`.
         var hit: WindowId? = nil
         for wid in layout.zOrder {
             guard let span = layout.placements[wid] else { continue }
-            if span.lane == lane && span.slot0 <= slot && slot <= span.slot1 {
+            if span.lane0 <= lane && lane <= span.lane1
+                && span.slot0 <= slot && slot <= span.slot1
+            {
                 hit = wid
             }
         }

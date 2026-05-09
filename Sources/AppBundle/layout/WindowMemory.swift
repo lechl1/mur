@@ -17,18 +17,52 @@ struct WindowMemoryKey: Hashable, Codable {
 
 struct WindowMemoryEntry: Codable, Equatable {
     let shape: LayoutShape
-    let lane: Int
+    let lane0: Int
+    let lane1: Int
     let slot0: Int
     let slot1: Int
 
     init(shape: LayoutShape, span: TileSpan) {
         self.shape = shape
-        self.lane = span.lane
+        self.lane0 = span.lane0
+        self.lane1 = span.lane1
         self.slot0 = span.slot0
         self.slot1 = span.slot1
     }
 
-    var span: TileSpan { TileSpan(lane: lane, slot0: slot0, slot1: slot1) }
+    var span: TileSpan { TileSpan(lane0: lane0, lane1: lane1, slot0: slot0, slot1: slot1) }
+
+    // Codable migration: legacy (v1) payloads encoded a single `lane`
+    // field. Decode it as `lane0 == lane1`. New writes always use both.
+    enum CodingKeys: String, CodingKey {
+        case shape, lane, lane0, lane1, slot0, slot1
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.shape = try c.decode(LayoutShape.self, forKey: .shape)
+        self.slot0 = try c.decode(Int.self, forKey: .slot0)
+        self.slot1 = try c.decode(Int.self, forKey: .slot1)
+        if let l0 = try c.decodeIfPresent(Int.self, forKey: .lane0),
+           let l1 = try c.decodeIfPresent(Int.self, forKey: .lane1)
+        {
+            self.lane0 = l0
+            self.lane1 = l1
+        } else {
+            let lane = try c.decode(Int.self, forKey: .lane)
+            self.lane0 = lane
+            self.lane1 = lane
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(shape, forKey: .shape)
+        try c.encode(lane0, forKey: .lane0)
+        try c.encode(lane1, forKey: .lane1)
+        try c.encode(slot0, forKey: .slot0)
+        try c.encode(slot1, forKey: .slot1)
+    }
 }
 
 final class WindowMemory {

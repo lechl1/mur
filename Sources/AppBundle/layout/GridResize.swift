@@ -110,10 +110,13 @@ enum GridResize {
         }
 
         // -- slot-axis transfer (within current lane) ---------------
+        // For multi-lane spans, slot weights are read/written on `lane0`
+        // (canonical). resolveRect uses lane0's slot weights too, so the
+        // visual feedback stays consistent.
         var resultSlotLane: Int? = nil
         var resultSlotWeights: [CGFloat]? = nil
         if slotLow || slotHigh {
-            let lane = span.lane
+            let lane = span.lane0
             let slots = sample.layout.slotCount(in: lane)
             if slots > 1 {
                 var weights: [CGFloat] = []
@@ -139,12 +142,15 @@ enum GridResize {
         // AeroSpace-style: dragging the right edge of a window grows
         // its column and shrinks the column to its right (and v.v.).
         // We operate on the USED-LANES partition; transfers happen
-        // between the dragged window's lane and the immediate
-        // visible-neighbour lane on the dragged side.
+        // between the dragged window's outer lane (lane0 for low edges,
+        // lane1 for high edges) and the immediate visible-neighbour
+        // lane on the dragged side.
         var resultLaneWeights: [CGFloat]? = nil
         if laneLow || laneHigh {
             let used = sample.layout.usedLanes
-            if let visIdx = used.firstIndex(of: span.lane) {
+            let visIdx0 = used.firstIndex(of: span.lane0)
+            let visIdx1 = used.firstIndex(of: span.lane1)
+            if visIdx0 != nil || visIdx1 != nil {
                 var weights: [CGFloat] = []
                 for l in 0..<sample.layout.shape.lanes {
                     weights.append(sample.layout.laneWeight(lane: l))
@@ -155,15 +161,15 @@ enum GridResize {
                 let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
                 let usable = laneAxisExtent - max(0, CGFloat(used.count - 1)) * sample.innerGap
                 if usedTotal > 0 && usable > 0 {
-                    if laneLow, visIdx > 0 {
-                        // Drag low-edge outward → grow current lane,
+                    if laneLow, let i0 = visIdx0, i0 > 0 {
+                        // Drag low-edge outward → grow current lane (lane0),
                         // shrink the previous USED lane.
                         let d = (laneLowDelta / usable) * usedTotal
-                        transfer(&weights, from: used[visIdx - 1], to: used[visIdx], delta: d)
+                        transfer(&weights, from: used[i0 - 1], to: span.lane0, delta: d)
                     }
-                    if laneHigh, visIdx < used.count - 1 {
+                    if laneHigh, let i1 = visIdx1, i1 < used.count - 1 {
                         let d = (laneHighDelta / usable) * usedTotal
-                        transfer(&weights, from: used[visIdx + 1], to: used[visIdx], delta: d)
+                        transfer(&weights, from: used[i1 + 1], to: span.lane1, delta: d)
                     }
                     resultLaneWeights = weights
                 }
