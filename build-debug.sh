@@ -10,4 +10,4 @@ swift build --target AppBundleTests "$@" # swift build doesn't build test target
 
 rm -rf .debug && mkdir .debug
 cp -r .build/debug/mur .debug
-cp -r .build/debug/AeroSpaceApp .debug
+cp -r .build/debug/MurApp .debug

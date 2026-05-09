@@ -5,7 +5,7 @@ import SwiftUI
 
 @main
 @MainActor
-struct AeroSpaceApp: App {
+struct MurApp: App {
     // `@StateObject var = .shared` evaluates the default in a nonisolated
     // context under the macOS 14 SDK. Annotating the struct as @MainActor
     // pulls the default-value evaluation onto the main actor, where the

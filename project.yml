@@ -17,7 +17,7 @@ targets:
     platform: macOS
     deploymentTarget: "13.0"
     sources:
-      - "Sources/AeroSpaceApp"
+      - "Sources/MurApp"
       - "resources"
       - "docs/config-examples/default-config.toml"
     dependencies:

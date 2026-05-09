@@ -17,7 +17,7 @@ let package = Package(
     products: [
         .executable(name: "mur", targets: ["Cli"]),
         // Don't use this build for release, use xcode instead
-        .executable(name: "AeroSpaceApp", targets: ["AeroSpaceApp"]),
+        .executable(name: "MurApp", targets: ["MurApp"]),
         // We only need to expose this as a product for xcode
         .library(name: "AppBundle", targets: ["AppBundle"]),
     ],
@@ -58,7 +58,7 @@ let package = Package(
             swiftSettings: swiftSettings,
         ),
         .executableTarget(
-            name: "AeroSpaceApp",
+            name: "MurApp",
             dependencies: [
                 .target(name: "AppBundle"),
             ],
