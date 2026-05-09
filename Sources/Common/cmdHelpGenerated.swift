@@ -60,6 +60,9 @@ let fullscreen_help_generated = """
 let grid_info_help_generated = """
     USAGE: grid-info [-h|--help] [--workspace <workspace>]
     """
+let grid_place_help_generated = """
+    USAGE: grid-place [-h|--help] [--window-id <window-id>] [--workspace <workspace>] <lane> <slot0> <slot1>
+    """
 let join_with_help_generated = """
     USAGE: join-with [-h|--help] [--window-id <window-id>] (left|down|up|right)
     """

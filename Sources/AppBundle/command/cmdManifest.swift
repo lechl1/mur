@@ -34,6 +34,8 @@ extension CmdArgs {
                 command = FullscreenCommand(args: self as! FullscreenCmdArgs)
             case .gridInfo:
                 command = GridInfoCommand(args: self as! GridInfoCmdArgs)
+            case .gridPlace:
+                command = GridPlaceCommand(args: self as! GridPlaceCmdArgs)
             case .joinWith:
                 command = JoinWithCommand(args: self as! JoinWithCmdArgs)
             case .layout:
