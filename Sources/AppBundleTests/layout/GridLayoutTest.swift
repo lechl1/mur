@@ -5,110 +5,132 @@ import AppKit
 
 @Suite("GridLayout")
 struct GridLayoutTest {
-    // MARK: TileSpan
+    private let landscapeAvail = Rect(topLeftX: 0, topLeftY: 0, width: 900, height: 600)
+    private let portraitAvail  = Rect(topLeftX: 0, topLeftY: 0, width: 600, height: 900)
 
-    @Test func tileSpanClampShrinksToFit() {
-        let span = TileSpan(col0: 0, row0: 0, col1: 4, row1: 4)
-        let clamped = span.clamped(to: GridShape(cols: 3, rows: 3))
-        #expect(clamped == TileSpan(col0: 0, row0: 0, col1: 2, row1: 2))
+    // MARK: orientation detection
+
+    @Test func orientationFromMonitor() {
+        #expect(LayoutOrientation.forMonitor(width: 1920, height: 1080) == .landscape)
+        #expect(LayoutOrientation.forMonitor(width: 1080, height: 1920) == .portrait)
+        // Square defaults to landscape.
+        #expect(LayoutOrientation.forMonitor(width: 1000, height: 1000) == .landscape)
     }
 
-    @Test func tileSpanClampReturnsNilWhenFullyOutside() {
-        let span = TileSpan(col0: 5, row0: 5, col1: 6, row1: 6)
-        // Negative-only domain via clamp: the clamp moves both endpoints
-        // to col=2, so this is actually a degenerate single cell — not
-        // "fully outside" by the current implementation. Use a real
-        // out-of-domain check via reshape instead. Keep this test honest:
-        let clamped = span.clamped(to: GridShape(cols: 3, rows: 3))
-        #expect(clamped == TileSpan(col0: 2, row0: 2, col1: 2, row1: 2))
+    // MARK: per-lane slot counts (the user's "left col 4 rows, right col 3" requirement)
+
+    @Test func laneSlotCountsAreIndependent() {
+        let layout = GridLayout(shape: .landscapeDefault) // 3 lanes
+        // Lane 0: 4 slots (left column has 4 rows in landscape)
+        for s in 0..<4 { layout.place(WindowId(100 + s), at: .single(lane: 0, slot: s)) }
+        // Lane 1: 2 slots (middle column 2 rows)
+        for s in 0..<2 { layout.place(WindowId(200 + s), at: .single(lane: 1, slot: s)) }
+        // Lane 2: 3 slots (right column 3 rows)
+        for s in 0..<3 { layout.place(WindowId(300 + s), at: .single(lane: 2, slot: s)) }
+
+        #expect(layout.slotCount(in: 0) == 4)
+        #expect(layout.slotCount(in: 1) == 2)
+        #expect(layout.slotCount(in: 2) == 3)
     }
 
-    @Test func tileSpanOverlapDetection() {
-        let a = TileSpan(col0: 0, row0: 0, col1: 1, row1: 1)
-        let b = TileSpan(col0: 1, row0: 1, col1: 2, row1: 2)
-        let c = TileSpan(col0: 2, row0: 2, col1: 2, row1: 2)
-        #expect(a.overlaps(b))
-        #expect(!a.overlaps(c))
+    // MARK: empty-lane collapse
+
+    @Test func emptyLanesCollapseLandscape() {
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        // Only lane 0 in use → 1 used lane, full width.
+        let r = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        #expect(r?.width == 900)
+        #expect(r?.height == 600)
     }
 
-    // MARK: collapsing
-
-    @Test func collapsingEmptyColumnsExpandsRemaining() {
-        let layout = GridLayout(shape: .defaultLayout) // 3×3
-        // Place one window in column 0 only.
-        layout.place(1, at: .column(0, in: .defaultLayout))
-        // With column 1 and 2 empty, the only "used" column is col 0.
-        // It should occupy the FULL width of `available`.
-        let available = Rect(topLeftX: 0, topLeftY: 0, width: 900, height: 600)
-        let rect = layout.resolveRect(for: 1, in: available)
-        #expect(rect != nil)
-        #expect(rect?.width == 900)
-        #expect(rect?.height == 600)
+    @Test func emptyLanesCollapsePortrait() {
+        let layout = GridLayout(shape: .portraitDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        // In portrait, lane axis is Y. One used lane → full height, full width.
+        let r = layout.resolveRect(for: 1, in: portraitAvail, innerGap: 0)
+        #expect(r?.width == 600)
+        #expect(r?.height == 900)
     }
 
-    @Test func collapsingTwoUsedColumnsSplitsHalf() {
-        let layout = GridLayout(shape: .defaultLayout)
-        layout.place(1, at: .column(0, in: .defaultLayout))
-        layout.place(2, at: .column(2, in: .defaultLayout))
-        let available = Rect(topLeftX: 0, topLeftY: 0, width: 900, height: 600)
-        // Used cols = {0, 2}. Two used cells of width 450 each.
-        let r1 = layout.resolveRect(for: 1, in: available)
-        let r2 = layout.resolveRect(for: 2, in: available)
-        #expect(r1?.width == 450)
-        #expect(r2?.width == 450)
-        #expect(r1?.topLeftX == 0)
-        #expect(r2?.topLeftX == 450)
+    // MARK: slot weights — equal partition by default
+
+    @Test func twoSlotsInLaneSplitFiftyFiftyLandscape() {
+        let layout = GridLayout(shape: .landscapeDefault)
+        // Two windows in lane 0 → lane uses full width (other lanes empty),
+        // partitioned vertically 50/50 by default weights.
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        let r1 = layout.resolveRect(for: 1, in: landscapeAvail)
+        let r2 = layout.resolveRect(for: 2, in: landscapeAvail)
+        #expect(r1?.height == 300)
+        #expect(r2?.height == 300)
+        #expect(r1?.topLeftY == 0)
+        #expect(r2?.topLeftY == 300)
+    }
+
+    @Test func slotWeightsRedistribute() {
+        let layout = GridLayout(shape: .landscapeDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        // Make slot 0 take 2/3 of the height by setting weights [2, 1].
+        layout.setSlotWeights(lane: 0, weights: [2, 1])
+        let r1 = layout.resolveRect(for: 1, in: landscapeAvail)
+        let r2 = layout.resolveRect(for: 2, in: landscapeAvail)
+        #expect(r1?.height == 400)  // 2/3 * 600
+        #expect(r2?.height == 200)
+    }
+
+    // MARK: portrait orientation: rows are rigid
+
+    @Test func portraitFlipsLaneAxis() {
+        let layout = GridLayout(shape: .portraitDefault) // 3 rigid rows
+        layout.place(1, at: .soleSlot(lane: 0)) // top row
+        layout.place(2, at: .soleSlot(lane: 1)) // middle row
+        layout.place(3, at: .soleSlot(lane: 2)) // bottom row
+        let r1 = layout.resolveRect(for: 1, in: portraitAvail)
+        let r3 = layout.resolveRect(for: 3, in: portraitAvail)
+        // Each row is 300 tall; window 1 at top (y=0), window 3 at y=600.
+        #expect(r1?.height == 300)
+        #expect(r1?.topLeftY == 0)
+        #expect(r3?.topLeftY == 600)
+        #expect(r1?.width == 600)  // full width since each row has 1 slot
     }
 
     // MARK: placement heuristic
 
-    @Test func newWindowOnEmptyWorkspaceGoesToMiddleColumn() {
-        let layout = GridLayout(shape: .defaultLayout)
+    @Test func newWindowOnEmptyWorkspaceGoesToMiddleLane() {
+        let layout = GridLayout()
         let span = layout.placementForNewWindow()
-        #expect(span == .column(1, in: .defaultLayout))
+        #expect(span == .soleSlot(lane: 1))
     }
 
-    @Test func newWindowAdjacentToSingleUsedColumnPicksEmptySide() {
-        let layout = GridLayout(shape: .defaultLayout)
-        // Existing window in column 0. Both 1 and 2 are empty; right is
-        // the side with more space, so the heuristic should pick col=2
-        // (the further-right empty column with maximum space).
-        layout.place(1, at: .column(0, in: .defaultLayout))
+    @Test func newWindowAdjacentToSingleUsedLane() {
+        let layout = GridLayout()
+        layout.place(1, at: .soleSlot(lane: 0))
         let span = layout.placementForNewWindow()
-        // cStar=0, leftEmpty=false (no col -1), rightEmpty=true → col 1.
-        #expect(span == .column(1, in: .defaultLayout))
+        // Both 1 and 2 are empty; right has more space (or tied, prefer right).
+        #expect(span == .soleSlot(lane: 1))
     }
 
-    @Test func newWindowOverlapsMiddleWhenNoEmptyColumn() {
-        let layout = GridLayout(shape: .defaultLayout)
-        layout.place(1, at: .column(0, in: .defaultLayout))
-        layout.place(2, at: .column(1, in: .defaultLayout))
-        layout.place(3, at: .column(2, in: .defaultLayout))
-        // No empty columns left. New window should overlap middle (col 1).
-        let span = layout.placementForNewWindow()
-        #expect(span == .column(1, in: .defaultLayout))
+    @Test func newWindowAddsSlotWhenAllLanesUsed() {
+        let layout = GridLayout()
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.place(3, at: .soleSlot(lane: 2))
+        // No empty lane; with focus on lane 1, add a new slot to lane 1.
+        let span = layout.placementForNewWindow(focusedLane: 1)
+        #expect(span == .single(lane: 1, slot: 1))
     }
 
     // MARK: zOrder
 
     @Test func placePromotesToTopOfZOrder() {
         let layout = GridLayout()
-        layout.place(1, at: .cell(col: 0, row: 0))
-        layout.place(2, at: .cell(col: 1, row: 0))
-        layout.place(3, at: .cell(col: 2, row: 0))
-        #expect(layout.zOrder == [1, 2, 3])
-        layout.place(1, at: .cell(col: 0, row: 0)) // re-place
-        #expect(layout.zOrder == [2, 3, 1])
-    }
-
-    @Test func reshapeEvictsWindowsOutsideNewBounds() {
-        let layout = GridLayout(shape: GridShape(cols: 4, rows: 4))
-        layout.place(1, at: .cell(col: 0, row: 0))
-        layout.place(2, at: .cell(col: 3, row: 3))
-        let evicted = layout.reshape(to: GridShape(cols: 2, rows: 2))
-        // Window 2 is at (3,3), which doesn't fit in a 2x2; clamped to (1,1).
-        // Both should survive because clamp pulls them inside.
-        #expect(evicted.isEmpty)
-        #expect(layout.shape == GridShape(cols: 2, rows: 2))
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        #expect(layout.zOrder == [1, 2])
+        layout.place(1, at: .soleSlot(lane: 0))
+        #expect(layout.zOrder == [2, 1])
     }
 }

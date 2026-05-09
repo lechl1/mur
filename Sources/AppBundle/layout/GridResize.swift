@@ -1,26 +1,29 @@
 import AppKit
 import Common
 
-/// Mouse-driven resize for grid-tiled windows. Preserves AeroSpace's
-/// "drag any edge, the layout follows" feel while keeping mur's strict
-/// rule that windows always occupy a whole-cell `TileSpan`.
+/// Mouse-driven resize for tiled windows. Preserves AeroSpace's
+/// "drag any edge, the layout follows" feel.
 ///
 /// Pipeline (matches AeroSpace's `resizeWithMouse`):
-///   1. AX fires `kAXResizedNotification` — `resizeWithMouseTask` enqueues
-///      a light session.
-///   2. We diff the current AX rect against `lastAppliedLayoutPhysicalRect`
-///      to learn which edges the user dragged and by how much.
-///   3. `GridResize.snap` converts the dragged edges into a new `TileSpan`
-///      by mapping pixel positions onto the visible (collapsed) cell grid.
-///   4. Caller commits via `GridLayout.place(windowId, at: newSpan)` and
-///      `WindowMemory.remember(...)`. A refresh re-renders.
+///   1. AX fires `kAXResizedNotification` — `resizedObs` enqueues a light
+///      session if `isManipulatedWithMouse`.
+///   2. Diff `window.getAxRect()` against `lastAppliedLayoutPhysicalRect`
+///      to learn which edges moved.
+///   3. `GridResize.snap(...)` translates the drag into:
+///        - a new slot-weights vector for the affected lane, OR
+///        - nothing (drag was along the rigid lane axis — no-op).
+///   4. Caller applies via `layout.setSlotWeights(lane:weights:)` and
+///      schedules a refresh.
 ///
-/// Floating windows are intentionally out of scope here — they keep their
-/// free-form pixel resize, identical to AeroSpace.
+/// Axis mapping by orientation:
+///   - `.landscape`: lane axis = X (rigid), slot axis = Y. So top/bottom
+///     drags adjust slot weights; left/right drags are no-ops.
+///   - `.portrait`: lane axis = Y (rigid), slot axis = X. So left/right
+///     drags adjust slot weights; top/bottom drags are no-ops.
+///
+/// Floating windows are out of scope — they keep AeroSpace's free-form
+/// pixel resize.
 enum GridResize {
-    /// Bitmask of which edges the user dragged. Determined by comparing
-    /// the AX rect to `lastAppliedLayoutPhysicalRect`. A small `epsilon`
-    /// avoids treating sub-pixel jitter as an edge drag.
     struct Edges: OptionSet {
         let rawValue: Int
         static let left   = Edges(rawValue: 1 << 0)
@@ -29,156 +32,105 @@ enum GridResize {
         static let bottom = Edges(rawValue: 1 << 3)
     }
 
-    /// Inputs the snapper needs from the AX side. Caller fills these in.
     struct DragSample {
         let layout: GridLayout
-        /// The window being resized. Must be present in `layout.placements`.
         let windowId: WindowId
-        /// The rect mur last laid the window out to (i.e. the snapped grid
-        /// rect). Origin and dimensions are screen-space.
         let lastAppliedRect: Rect
-        /// The rect AX reports right now after the user drag.
         let currentRect: Rect
-        /// The screen-space rect the workspace gets to lay tiles inside,
-        /// already padded by outer gaps. (Same `available` passed to
-        /// `GridLayout.resolveRect`.)
         let available: Rect
-        /// Inner gap between adjacent USED cells. Same value passed to
-        /// `resolveRect`. Pass 0 if gaps are off.
         let innerGap: CGFloat
     }
 
-    /// Detect which edges moved beyond `epsilon` pixels.
-    static func detectEdges(_ sample: DragSample, epsilon: CGFloat = 1.0) -> Edges {
+    /// Returned from a successful slot-axis drag. Caller writes via
+    /// `layout.setSlotWeights(lane: snap.lane, weights: snap.weights)`.
+    struct SlotResize {
+        let lane: Int
+        let weights: [CGFloat]
+    }
+
+    /// Detect dragged edges, epsilon-tolerant.
+    static func detectEdges(_ s: DragSample, epsilon: CGFloat = 1.0) -> Edges {
         var e: Edges = []
-        let last = sample.lastAppliedRect
-        let cur = sample.currentRect
-        // AeroSpace convention: a positive `last.minX - cur.minX` means the
-        // user dragged the LEFT edge to the left (window grew leftward).
-        if abs(last.minX - cur.minX) > epsilon { e.insert(.left) }
-        if abs(last.maxX - cur.maxX) > epsilon { e.insert(.right) }
-        if abs(last.minY - cur.minY) > epsilon { e.insert(.top) }
-        if abs(last.maxY - cur.maxY) > epsilon { e.insert(.bottom) }
+        if abs(s.lastAppliedRect.minX - s.currentRect.minX) > epsilon { e.insert(.left) }
+        if abs(s.lastAppliedRect.maxX - s.currentRect.maxX) > epsilon { e.insert(.right) }
+        if abs(s.lastAppliedRect.minY - s.currentRect.minY) > epsilon { e.insert(.top) }
+        if abs(s.lastAppliedRect.maxY - s.currentRect.maxY) > epsilon { e.insert(.bottom) }
         return e
     }
 
-    /// Snap the dragged window to a new `TileSpan`.
-    ///
-    /// The mapping is done in *visible-cell* space: empty rows/cols are
-    /// already collapsed in `available`, so we resolve each dragged edge
-    /// to the nearest visible-cell boundary, then translate that visible
-    /// index back to an absolute (col, row) in `layout.shape`.
-    ///
-    /// Returns `nil` if the window isn't tiled, edges are degenerate, or
-    /// the resulting span would be empty.
-    static func snap(_ sample: DragSample) -> TileSpan? {
-        guard let currentSpan = sample.layout.placements[sample.windowId] else { return nil }
+    /// Compute the new slot-weights vector for the lane the dragged window
+    /// is in. Returns nil if no slot-axis drag occurred or the lane has
+    /// only 1 slot (nothing to redistribute).
+    static func snap(_ sample: DragSample) -> SlotResize? {
+        guard let span = sample.layout.placements[sample.windowId] else { return nil }
         let edges = detectEdges(sample)
         if edges.isEmpty { return nil }
 
-        let usedColsAbs = sample.layout.usedCols
-        let usedRowsAbs = sample.layout.usedRows
-        guard !usedColsAbs.isEmpty, !usedRowsAbs.isEmpty else { return nil }
-
-        // Build the visible-cell boundary lines along each axis. With N used
-        // cells, we have N+1 boundaries. Boundary i sits at:
-        //   available.minX + i * (cellW + innerGap) - innerGap/2  (i>0)
-        // We use the cell *centres* of inter-cell gutters as the snap targets.
-        let nCols = CGFloat(usedColsAbs.count)
-        let nRows = CGFloat(usedRowsAbs.count)
-        let totalColGap = max(0, nCols - 1) * sample.innerGap
-        let totalRowGap = max(0, nRows - 1) * sample.innerGap
-        let cellW = (sample.available.width - totalColGap) / nCols
-        let cellH = (sample.available.height - totalRowGap) / nRows
-
-        // Boundary positions (inclusive both ends): i in 0...N maps to the
-        // "left edge of visible cell i" (or the right edge of N-1 when i=N).
-        func colBoundary(_ i: Int) -> CGFloat {
-            // Snap to the LEFT edge of cell i for i in 0..<N, and to the
-            // RIGHT edge of cell N-1 for i==N.
-            if i <= 0 { return sample.available.minX }
-            if i >= usedColsAbs.count {
-                return sample.available.minX + nCols * cellW + (nCols - 1) * sample.innerGap
-            }
-            return sample.available.minX + CGFloat(i) * cellW + CGFloat(i - 1) * sample.innerGap + (sample.innerGap / 2)
+        let orientation = sample.layout.shape.orientation
+        // Slot-axis edges are the ones that adjust weights:
+        //   landscape → top/bottom; portrait → left/right.
+        let touchedLow: Bool
+        let touchedHigh: Bool
+        let axisExtent: CGFloat
+        let lowDelta: CGFloat
+        let highDelta: CGFloat
+        switch orientation {
+            case .landscape:
+                touchedLow = edges.contains(.top)
+                touchedHigh = edges.contains(.bottom)
+                axisExtent = sample.available.height
+                lowDelta = sample.lastAppliedRect.minY - sample.currentRect.minY  // up = +
+                highDelta = sample.currentRect.maxY - sample.lastAppliedRect.maxY // down = +
+            case .portrait:
+                touchedLow = edges.contains(.left)
+                touchedHigh = edges.contains(.right)
+                axisExtent = sample.available.width
+                lowDelta = sample.lastAppliedRect.minX - sample.currentRect.minX  // left = +
+                highDelta = sample.currentRect.maxX - sample.lastAppliedRect.maxX // right = +
         }
-        func rowBoundary(_ i: Int) -> CGFloat {
-            if i <= 0 { return sample.available.minY }
-            if i >= usedRowsAbs.count {
-                return sample.available.minY + nRows * cellH + (nRows - 1) * sample.innerGap
-            }
-            return sample.available.minY + CGFloat(i) * cellH + CGFloat(i - 1) * sample.innerGap + (sample.innerGap / 2)
-        }
+        if !touchedLow && !touchedHigh { return nil } // Lane-axis drag → rigid no-op.
 
-        // Find the nearest boundary index along an axis to a given pixel.
-        // Result range: 0...usedCount (inclusive — N+1 boundaries).
-        func nearestColBoundary(_ x: CGFloat) -> Int {
-            var best = 0
-            var bestDist = CGFloat.infinity
-            for i in 0...usedColsAbs.count {
-                let d = abs(colBoundary(i) - x)
-                if d < bestDist { bestDist = d; best = i }
-            }
-            return best
+        let lane = span.lane
+        let slots = sample.layout.slotCount(in: lane)
+        guard slots > 1 else { return nil }
+
+        var weights: [CGFloat] = []
+        for s in 0..<slots { weights.append(sample.layout.slotWeight(lane: lane, slot: s)) }
+        let total = weights.reduce(0, +)
+        guard total > 0 else { return nil }
+
+        let totalSlotGap = max(0, CGFloat(slots - 1)) * sample.innerGap
+        let usable = axisExtent - totalSlotGap
+        guard usable > 0 else { return nil }
+
+        if touchedLow, span.slot0 > 0 {
+            // Drag low-edge outward (+) → take from prev slot, give to slot0.
+            let weightDelta = (lowDelta / usable) * total
+            transfer(&weights, from: span.slot0 - 1, to: span.slot0, delta: weightDelta)
         }
-        func nearestRowBoundary(_ y: CGFloat) -> Int {
-            var best = 0
-            var bestDist = CGFloat.infinity
-            for i in 0...usedRowsAbs.count {
-                let d = abs(rowBoundary(i) - y)
-                if d < bestDist { bestDist = d; best = i }
-            }
-            return best
+        if touchedHigh, span.slot1 < slots - 1 {
+            let weightDelta = (highDelta / usable) * total
+            transfer(&weights, from: span.slot1 + 1, to: span.slot1, delta: weightDelta)
         }
 
-        // Translate visible-cell index → absolute col/row in shape.
-        // - For "start" edges (left/top): visible index `i` (0..<N) maps to
-        //   the absolute column `usedColsAbs[i]`. Visible index N is past
-        //   the end → absolute `shape.cols - 1` clamped.
-        // - For "end" edges (right/bottom): visible index `i` (1...N) maps
-        //   to the absolute column `usedColsAbs[i-1]` (the i-th boundary
-        //   sits at the right edge of visible cell i-1).
-        let cur = sample.currentRect
-        var newCol0 = currentSpan.col0
-        var newCol1 = currentSpan.col1
-        var newRow0 = currentSpan.row0
-        var newRow1 = currentSpan.row1
+        return SlotResize(lane: lane, weights: weights)
+    }
 
-        if edges.contains(.left) {
-            let bIdx = nearestColBoundary(cur.minX)
-            newCol0 = bIdx < usedColsAbs.count ? usedColsAbs[bIdx] : usedColsAbs.last!
-        }
-        if edges.contains(.right) {
-            let bIdx = nearestColBoundary(cur.maxX)
-            // boundary i is the right edge of visible cell i-1
-            let visIdx = max(1, bIdx) - 1
-            newCol1 = usedColsAbs[min(visIdx, usedColsAbs.count - 1)]
-        }
-        if edges.contains(.top) {
-            let bIdx = nearestRowBoundary(cur.minY)
-            newRow0 = bIdx < usedRowsAbs.count ? usedRowsAbs[bIdx] : usedRowsAbs.last!
-        }
-        if edges.contains(.bottom) {
-            let bIdx = nearestRowBoundary(cur.maxY)
-            let visIdx = max(1, bIdx) - 1
-            newRow1 = usedRowsAbs[min(visIdx, usedRowsAbs.count - 1)]
-        }
-
-        // Repair inversions that can happen if the user drags one edge past
-        // its opposite.
-        if newCol0 > newCol1 { swap(&newCol0, &newCol1) }
-        if newRow0 > newRow1 { swap(&newRow0, &newRow1) }
-
-        let snapped = TileSpan(col0: newCol0, row0: newRow0, col1: newCol1, row1: newRow1)
-        return snapped.clamped(to: sample.layout.shape)
+    /// Move `delta` weight from index `from` to index `to`. Floors at
+    /// `minWeight` so a slot can't disappear.
+    private static func transfer(_ weights: inout [CGFloat], from: Int, to: Int, delta: CGFloat) {
+        let minWeight: CGFloat = 0.05
+        guard from >= 0, from < weights.count, to >= 0, to < weights.count else { return }
+        // Clamp to the available slack on both sides.
+        let positiveCap = weights[from] - minWeight     // most we can take from `from`
+        let negativeCap = -(weights[to] - minWeight)    // most we can give back (delta < 0)
+        let clamped = max(negativeCap, min(positiveCap, delta))
+        weights[from] -= clamped
+        weights[to]   += clamped
     }
 }
 
-// MARK: - Floating windows
-
-/// Floating windows keep AeroSpace's free-form mouse resize. We just record
-/// the new size for layout-on-restore, identical to `lastFloatingSize` in
-/// AeroSpace's `Window` model. No grid math involved — this is a marker
-/// type for documentation; the existing AX-driven path on `Window` already
-/// stores `lastFloatingSize` and is unchanged.
+/// Floating windows keep AeroSpace's free-form pixel resize (the existing
+/// `Window.lastFloatingSize` path is unchanged). This enum exists for
+/// documentation/grouping only.
 enum FloatingResize {}

@@ -6,41 +6,33 @@ import Foundation
 /// placed a window in. When a matching window opens later, mur restores the
 /// span instead of running the placement heuristic.
 ///
-/// Persisted to `~/.config/mur/window-memory.json` so memory survives
-/// restarts. Save is debounced by the caller; this type is sync.
+/// Keyed by `LayoutShape` first, so a workspace's landscape vs portrait
+/// memories don't cross-contaminate when a monitor rotates.
+///
+/// Persisted to `~/.config/mur/window-memory.json`.
 struct WindowMemoryKey: Hashable, Codable {
     let appId: String
     let windowTitle: String
 }
 
-/// On-disk record. The `shape` field lets future grid shapes have
-/// independent memory ("3×3 layout remembers Slack at col=0, but the 4×3
-/// layout remembers Slack at col=1").
 struct WindowMemoryEntry: Codable, Equatable {
-    let cols: Int
-    let rows: Int
-    let col0: Int
-    let row0: Int
-    let col1: Int
-    let row1: Int
+    let shape: LayoutShape
+    let lane: Int
+    let slot0: Int
+    let slot1: Int
 
-    init(shape: GridShape, span: TileSpan) {
-        self.cols = shape.cols
-        self.rows = shape.rows
-        self.col0 = span.col0
-        self.row0 = span.row0
-        self.col1 = span.col1
-        self.row1 = span.row1
+    init(shape: LayoutShape, span: TileSpan) {
+        self.shape = shape
+        self.lane = span.lane
+        self.slot0 = span.slot0
+        self.slot1 = span.slot1
     }
 
-    var shape: GridShape { GridShape(cols: cols, rows: rows) }
-    var span: TileSpan { TileSpan(col0: col0, row0: row0, col1: col1, row1: row1) }
+    var span: TileSpan { TileSpan(lane: lane, slot0: slot0, slot1: slot1) }
 }
 
 final class WindowMemory {
-    /// Keyed by shape first so a layout switch (3×3 → 2×2) doesn't make
-    /// memory entries for the previous shape pollute the new one.
-    private var entries: [GridShape: [WindowMemoryKey: TileSpan]] = [:]
+    private var entries: [LayoutShape: [WindowMemoryKey: TileSpan]] = [:]
     private let storeURL: URL
 
     init(storeURL: URL = WindowMemory.defaultStoreURL()) {
@@ -58,20 +50,20 @@ final class WindowMemory {
 
     // MARK: lookup
 
-    func recall(appId: String, title: String, shape: GridShape) -> TileSpan? {
+    func recall(appId: String, title: String, shape: LayoutShape) -> TileSpan? {
         entries[shape]?[WindowMemoryKey(appId: appId, windowTitle: title)]
     }
 
     // MARK: mutation
 
-    func remember(appId: String, title: String, shape: GridShape, span: TileSpan) {
+    func remember(appId: String, title: String, shape: LayoutShape, span: TileSpan) {
         let key = WindowMemoryKey(appId: appId, windowTitle: title)
         var byShape = entries[shape] ?? [:]
         byShape[key] = span
         entries[shape] = byShape
     }
 
-    func forget(appId: String, title: String, shape: GridShape) {
+    func forget(appId: String, title: String, shape: LayoutShape) {
         let key = WindowMemoryKey(appId: appId, windowTitle: title)
         entries[shape]?.removeValue(forKey: key)
         if entries[shape]?.isEmpty == true { entries.removeValue(forKey: shape) }
@@ -81,9 +73,9 @@ final class WindowMemory {
 
     private struct OnDisk: Codable {
         let version: Int
-        let entries: [WindowMemoryEntry_Keyed]
+        let entries: [Keyed]
     }
-    private struct WindowMemoryEntry_Keyed: Codable {
+    private struct Keyed: Codable {
         let key: WindowMemoryKey
         let entry: WindowMemoryEntry
     }
@@ -91,7 +83,7 @@ final class WindowMemory {
     func load() {
         guard let data = try? Data(contentsOf: storeURL) else { return }
         guard let decoded = try? JSONDecoder().decode(OnDisk.self, from: data) else { return }
-        var rebuilt: [GridShape: [WindowMemoryKey: TileSpan]] = [:]
+        var rebuilt: [LayoutShape: [WindowMemoryKey: TileSpan]] = [:]
         for keyed in decoded.entries {
             var byShape = rebuilt[keyed.entry.shape] ?? [:]
             byShape[keyed.key] = keyed.entry.span
@@ -101,16 +93,13 @@ final class WindowMemory {
     }
 
     func save() {
-        var flat: [WindowMemoryEntry_Keyed] = []
+        var flat: [Keyed] = []
         for (shape, byKey) in entries {
             for (key, span) in byKey {
-                flat.append(WindowMemoryEntry_Keyed(
-                    key: key,
-                    entry: WindowMemoryEntry(shape: shape, span: span)
-                ))
+                flat.append(Keyed(key: key, entry: WindowMemoryEntry(shape: shape, span: span)))
             }
         }
-        let payload = OnDisk(version: 1, entries: flat)
+        let payload = OnDisk(version: 2, entries: flat)
         let dir = storeURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         guard let data = try? JSONEncoder().encode(payload) else { return }

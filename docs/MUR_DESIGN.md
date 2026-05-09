@@ -12,22 +12,37 @@ slated for removal.
 
 1. **No layout trees.** No `TilingContainer`, no recursive split nodes, no
    orientation flips. A workspace has *one* active grid layout, period.
-2. **Predefined grids.** The first (and only initial) layout is a **3×3 grid**.
-   Future layouts (2×2, 1×3, 1×2, 4×3, etc.) plug in behind the same protocol.
-3. **Tiles, not splits.** A grid has fixed cell *coordinates*. A window's
-   geometry is described as a **tile span** — a contiguous rectangle of cells
-   `(col0..col1, row0..row1)`.
-4. **Stacking is first-class.** Multiple windows can occupy overlapping spans.
-   Z-order is explicit. This is what AeroSpace's tree paradigm cannot express.
-5. **Empty rows/cols collapse.** If a row or column has zero windows touching
-   it, it contributes 0 to the layout, and the remaining rows/cols expand to
-   fill. At least one cell is always occupied per workspace (enforced when the
-   workspace has ≥1 tiled window).
-6. **Floating still works.** A window can opt out of the grid entirely and
-   float, exactly as in AeroSpace.
-7. **Sticky placement memory.** When a known window (matched by app id +
-   window title) opens, it reuses its last-known tile span. Otherwise the
-   placement heuristic chooses one.
+2. **Orientation-aware: rigid lanes, flexible slots-per-lane.**
+   A workspace has a fixed number of **lanes** (3 by default). Lanes
+   are rigid: equal extent, fixed positions, no swapping. Each lane
+   partitions independently into **slots** whose extent is weighted.
+   The orientation of the active monitor decides the axis mapping:
+    - **Landscape** (`width > height`): lane = column (rigid x-position
+      and width), slot = row within a column (flexible y-extent). Left
+      column may have 4 rows, middle 2, right 3.
+    - **Portrait** (`height >= width`): lane = row (rigid y-position
+      and height), slot = column within a row (flexible x-extent). Top
+      row may have 4 cols, middle 2, bottom 3.
+
+   Same model, axes swapped. All semantics below apply to both.
+3. **Tiles, not splits.** A window's geometry is a **tile span**:
+   `(lane, slot0..slot1)` — a contiguous run of slots in a single lane.
+   No cross-lane spans. Most placements are single-slot (`slot0 == slot1`).
+4. **Per-lane slot weights.** Within a lane, slot extents are weighted
+   (default 1.0 each). Mouse drag along the **slot axis** (vertical in
+   landscape, horizontal in portrait) redistributes weight between
+   adjacent slots — same continuous feel as AeroSpace's resize. Drag
+   along the **lane axis** is rigid (no-op or snap-back).
+5. **Stacking is first-class.** Multiple windows can occupy overlapping
+   spans within the same column. Z-order is explicit and updates on focus.
+6. **Empty columns collapse.** If a column has zero windows, it contributes
+   0 width — the remaining columns expand to fill. Within a column, empty
+   row-slots compact (row indices reindex when a window leaves).
+7. **Floating still works.** A window can opt out of the grid and float,
+   exactly as in AeroSpace.
+8. **Sticky placement memory.** When a known window (matched by app id +
+   window title) opens, it reuses its last `(col, row0, row1)`. Otherwise
+   the placement heuristic chooses one.
 
 ## Non-goals
 
@@ -38,25 +53,38 @@ slated for removal.
 
 ## Core types
 
-### `GridShape`
+### `LayoutOrientation`
 
-A grid is `(cols: Int, rows: Int)` with `cols ≥ 1` and `rows ≥ 1`.
-The default layout is `GridShape(cols: 3, rows: 3)`.
+```
+enum LayoutOrientation { case landscape; case portrait }
+```
+
+Decides axis assignment. Detected from monitor rect at attach time.
+`width >= height` → landscape; otherwise portrait.
+
+### `LayoutShape`
+
+```
+struct LayoutShape { let orientation: LayoutOrientation; let lanes: Int }
+```
+
+`lanes` is the number of rigid lanes (default 3). In landscape, lanes
+are columns. In portrait, lanes are rows.
 
 ### `TileSpan`
 
 ```
 struct TileSpan {
-    let col0: Int   // inclusive, 0..<cols
-    let row0: Int   // inclusive, 0..<rows
-    let col1: Int   // inclusive, col0..<cols
-    let row1: Int   // inclusive, row0..<rows
+    let lane: Int           // 0..<shape.lanes
+    let slot0: Int          // inclusive
+    let slot1: Int          // inclusive, >= slot0
 }
 ```
 
-Invariants: `0 ≤ col0 ≤ col1 < shape.cols` and same for rows. Spans are
-always axis-aligned rectangles. A "single-tile" placement is `col0 == col1
-&& row0 == row1`. Spans **may overlap** other windows' spans.
+A window occupies a single lane and a contiguous run of slots inside that
+lane. Slot count per lane is dynamic — derived from `max(slot1) + 1` over
+the lane's placements. Most placements have `slot0 == slot1`. Spans
+**may overlap** other windows' spans within the same lane (stacking).
 
 ### `GridLayout` (per workspace)
 

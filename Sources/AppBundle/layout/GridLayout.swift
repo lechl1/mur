@@ -1,301 +1,307 @@
 import AppKit
 import Common
 
-// MARK: - GridShape
+// MARK: - Orientation
 
-/// Fixed cell count of a predefined layout. The default mur layout is 3×3.
-/// See `docs/MUR_DESIGN.md`.
-struct GridShape: Equatable, Hashable {
-    let cols: Int
-    let rows: Int
+/// Which axis is the "rigid" lane axis.
+/// - `.landscape`: lanes run left→right (columns); slots within a lane run top→bottom (rows).
+/// - `.portrait`: lanes run top→bottom (rows); slots within a lane run left→right (columns).
+enum LayoutOrientation: String, Hashable, Codable {
+    case landscape
+    case portrait
 
-    init(cols: Int, rows: Int) {
-        precondition(cols >= 1, "GridShape requires cols >= 1, got \(cols)")
-        precondition(rows >= 1, "GridShape requires rows >= 1, got \(rows)")
-        self.cols = cols
-        self.rows = rows
+    /// Pick orientation from a monitor rect. Square monitors map to landscape.
+    static func forMonitor(width: CGFloat, height: CGFloat) -> LayoutOrientation {
+        width >= height ? .landscape : .portrait
+    }
+}
+
+// MARK: - LayoutShape
+
+/// Rigid-axis cardinality. The model has `lanes` rigid lanes; slot counts
+/// per lane are dynamic and derived from `GridLayout.placements`.
+struct LayoutShape: Equatable, Hashable, Codable {
+    let orientation: LayoutOrientation
+    let lanes: Int
+
+    init(orientation: LayoutOrientation, lanes: Int) {
+        precondition(lanes >= 1, "LayoutShape requires lanes >= 1, got \(lanes)")
+        self.orientation = orientation
+        self.lanes = lanes
     }
 
-    /// The default mur layout — 3 columns × 3 rows.
-    static let defaultLayout = GridShape(cols: 3, rows: 3)
+    static let landscapeDefault = LayoutShape(orientation: .landscape, lanes: 3)
+    static let portraitDefault  = LayoutShape(orientation: .portrait,  lanes: 3)
 
-    var middleCol: Int { cols / 2 }
-    var middleRow: Int { rows / 2 }
+    var middleLane: Int { lanes / 2 }
 }
 
 // MARK: - TileSpan
 
-/// A contiguous, axis-aligned rectangle of grid cells occupied by one window.
-/// Spans MAY overlap other windows' spans — overlap is the stacking primitive.
+/// A contiguous run of slots in a single lane.
+///
+/// Naming is orientation-neutral: in landscape, `lane` is a column and
+/// `slot0..slot1` are rows within that column; in portrait, `lane` is a
+/// row and `slot0..slot1` are columns within that row.
 struct TileSpan: Equatable, Hashable {
-    let col0: Int
-    let row0: Int
-    let col1: Int
-    let row1: Int
+    let lane: Int
+    let slot0: Int
+    let slot1: Int
 
-    init(col0: Int, row0: Int, col1: Int, row1: Int) {
-        precondition(col0 <= col1, "TileSpan: col0 (\(col0)) must be <= col1 (\(col1))")
-        precondition(row0 <= row1, "TileSpan: row0 (\(row0)) must be <= row1 (\(row1))")
-        self.col0 = col0
-        self.row0 = row0
-        self.col1 = col1
-        self.row1 = row1
+    init(lane: Int, slot0: Int, slot1: Int) {
+        precondition(slot0 <= slot1, "TileSpan: slot0 (\(slot0)) must be <= slot1 (\(slot1))")
+        self.lane = lane
+        self.slot0 = slot0
+        self.slot1 = slot1
     }
 
-    /// Single cell at (col, row).
-    static func cell(col: Int, row: Int) -> TileSpan {
-        TileSpan(col0: col, row0: row, col1: col, row1: row)
+    /// A single slot at `(lane, slot)`.
+    static func single(lane: Int, slot: Int) -> TileSpan {
+        TileSpan(lane: lane, slot0: slot, slot1: slot)
     }
 
-    /// Full-row span at `col`, covering all rows of the given shape.
-    static func column(_ col: Int, in shape: GridShape) -> TileSpan {
-        TileSpan(col0: col, row0: 0, col1: col, row1: shape.rows - 1)
+    /// First slot of a fresh lane — used for "place this window alone in this lane."
+    static func soleSlot(lane: Int) -> TileSpan {
+        TileSpan(lane: lane, slot0: 0, slot1: 0)
     }
 
-    /// Full-column span at `row`, covering all cols of the given shape.
-    static func row(_ row: Int, in shape: GridShape) -> TileSpan {
-        TileSpan(col0: 0, row0: row, col1: shape.cols - 1, row1: row)
-    }
-
-    /// Every cell of the shape.
-    static func full(_ shape: GridShape) -> TileSpan {
-        TileSpan(col0: 0, row0: 0, col1: shape.cols - 1, row1: shape.rows - 1)
-    }
-
-    var width: Int { col1 - col0 + 1 }
-    var height: Int { row1 - row0 + 1 }
-    var area: Int { width * height }
-
-    func contains(col: Int, row: Int) -> Bool {
-        col0 <= col && col <= col1 && row0 <= row && row <= row1
-    }
-
-    func overlaps(_ other: TileSpan) -> Bool {
-        !(col1 < other.col0 || other.col1 < col0 || row1 < other.row0 || other.row1 < row0)
-    }
-
-    /// Clamp this span to fit inside `shape`. Returns nil if the span has no
-    /// overlap with the shape at all (which can happen if a layout change
-    /// shrinks the grid below the span's bounds).
-    func clamped(to shape: GridShape) -> TileSpan? {
-        let c0 = max(0, min(col0, shape.cols - 1))
-        let c1 = max(0, min(col1, shape.cols - 1))
-        let r0 = max(0, min(row0, shape.rows - 1))
-        let r1 = max(0, min(row1, shape.rows - 1))
-        if c0 > c1 || r0 > r1 { return nil }
-        return TileSpan(col0: c0, row0: r0, col1: c1, row1: r1)
-    }
+    var slotCount: Int { slot1 - slot0 + 1 }
 }
 
 // MARK: - GridLayout
 
 typealias WindowId = UInt32
 
-/// Per-workspace grid state. Replaces the AeroSpace tree of `TilingContainer`s.
-/// One layout per workspace; nesting is not supported by design.
+/// Per-workspace layout. Rigid `lanes`; flexible per-lane slot counts and
+/// weights. Replaces AeroSpace's tree of `TilingContainer`s.
 final class GridLayout {
-    private(set) var shape: GridShape
+    private(set) var shape: LayoutShape
 
-    /// Tiled windows and their spans. Windows not in this map are either
-    /// floating (workspace-level list, unchanged from AeroSpace) or unmanaged
-    /// (macOS native fullscreen / minimised / popup shims).
+    /// All tiled windows and their current span.
     private(set) var placements: [WindowId: TileSpan] = [:]
 
-    /// Stacking order for tiled windows, back → front. The last element
-    /// renders on top. Promoted on focus and on placement.
+    /// Stacking order, back→front. Updated on focus and on placement.
     private(set) var zOrder: [WindowId] = []
 
-    init(shape: GridShape = .defaultLayout) {
+    /// Per-lane slot weights, sized to `slotCount(in: lane)` lazily.
+    /// Default weight is 1.0. Mutated by mouse-resize along the slot axis.
+    private var slotWeights: [Int: [CGFloat]] = [:]
+
+    init(shape: LayoutShape = .landscapeDefault) {
         self.shape = shape
     }
 
     var isEmpty: Bool { placements.isEmpty }
 
-    // MARK: mutation
+    // MARK: Mutation
 
-    /// Insert or update a window's placement. Promotes to top of `zOrder`.
-    func place(_ windowId: WindowId, at span: TileSpan) {
-        guard let clamped = span.clamped(to: shape) else {
-            // Span does not intersect the current shape; treat as remove.
+    /// Place or move a window to `requested`. Slot indices below may exceed
+    /// the current `slotCount(in:)` — this implicitly grows the lane. The
+    /// window is promoted to the top of `zOrder`.
+    func place(_ windowId: WindowId, at requested: TileSpan) {
+        guard requested.lane >= 0 && requested.lane < shape.lanes else {
             remove(windowId)
             return
         }
-        placements[windowId] = clamped
+        let oldLane = placements[windowId]?.lane
+        placements[windowId] = requested
+        ensureSlotWeightsCapacity(lane: requested.lane, upTo: requested.slot1)
+        if let old = oldLane, old != requested.lane { compactLaneIfNeeded(old) }
         zOrder.removeAll { $0 == windowId }
         zOrder.append(windowId)
     }
 
-    /// Remove a window from the grid (because it closed, was floated, or
-    /// moved to another workspace). No-op if not present.
     @discardableResult
     func remove(_ windowId: WindowId) -> TileSpan? {
-        let removed = placements.removeValue(forKey: windowId)
-        if removed != nil {
-            zOrder.removeAll { $0 == windowId }
-        }
-        return removed
+        guard let span = placements.removeValue(forKey: windowId) else { return nil }
+        zOrder.removeAll { $0 == windowId }
+        compactLaneIfNeeded(span.lane)
+        return span
     }
 
-    /// Promote a window to the top of `zOrder` without changing its span.
-    /// Called on focus.
     func promote(_ windowId: WindowId) {
         guard placements[windowId] != nil else { return }
         zOrder.removeAll { $0 == windowId }
         zOrder.append(windowId)
     }
 
-    /// Switch to a different grid shape. Existing placements are clamped;
-    /// any that no longer fit are evicted (caller is responsible for
-    /// re-placing them, e.g. via the heuristic).
-    /// Returns the windows that were evicted.
-    func reshape(to newShape: GridShape) -> [WindowId] {
+    /// Switch shape (e.g. monitor rotated, or user changed lane count).
+    /// Returns evicted windows (those whose lane no longer fits).
+    func reshape(to newShape: LayoutShape) -> [WindowId] {
         if newShape == shape { return [] }
         var evicted: [WindowId] = []
         var rebuilt: [WindowId: TileSpan] = [:]
         for (wid, span) in placements {
-            if let clamped = span.clamped(to: newShape) {
-                rebuilt[wid] = clamped
+            if span.lane < newShape.lanes {
+                rebuilt[wid] = span
             } else {
                 evicted.append(wid)
             }
         }
+        var rebuiltWeights: [Int: [CGFloat]] = [:]
+        for (lane, w) in slotWeights where lane < newShape.lanes { rebuiltWeights[lane] = w }
         shape = newShape
         placements = rebuilt
+        slotWeights = rebuiltWeights
         zOrder.removeAll { evicted.contains($0) }
         return evicted
     }
 
-    // MARK: queries
+    // MARK: Queries
 
-    /// Used columns: the set of column indices touched by at least one window.
-    /// Sorted ascending.
-    var usedCols: [Int] {
-        var seen: Set<Int> = []
-        for span in placements.values {
-            for c in span.col0...span.col1 { seen.insert(c) }
+    /// Lanes containing at least one window. Sorted ascending.
+    var usedLanes: [Int] { Set(placements.values.map(\.lane)).sorted() }
+
+    /// Lanes with no windows.
+    var emptyLanes: [Int] {
+        let used = Set(usedLanes)
+        return (0..<shape.lanes).filter { !used.contains($0) }
+    }
+
+    /// Number of slots in a lane = `max(slot1) + 1` over its placements.
+    func slotCount(in lane: Int) -> Int {
+        var maxSlot = -1
+        for span in placements.values where span.lane == lane {
+            if span.slot1 > maxSlot { maxSlot = span.slot1 }
         }
-        return seen.sorted()
+        return maxSlot + 1
     }
 
-    /// Used rows: the set of row indices touched by at least one window.
-    /// Sorted ascending.
-    var usedRows: [Int] {
-        var seen: Set<Int> = []
-        for span in placements.values {
-            for r in span.row0...span.row1 { seen.insert(r) }
+    func windows(in lane: Int) -> [WindowId] {
+        placements
+            .filter { $0.value.lane == lane }
+            .sorted { $0.value.slot0 < $1.value.slot0 }
+            .map(\.key)
+    }
+
+    // MARK: Slot weights
+
+    func slotWeight(lane: Int, slot: Int) -> CGFloat {
+        let w = slotWeights[lane] ?? []
+        return slot >= 0 && slot < w.count ? w[slot] : 1.0
+    }
+
+    func setSlotWeights(lane: Int, weights: [CGFloat]) {
+        guard lane >= 0 && lane < shape.lanes, weights.allSatisfy({ $0 > 0 }) else { return }
+        slotWeights[lane] = weights
+    }
+
+    private func ensureSlotWeightsCapacity(lane: Int, upTo slot: Int) {
+        var w = slotWeights[lane] ?? []
+        while w.count <= slot { w.append(1.0) }
+        slotWeights[lane] = w
+    }
+
+    private func compactLaneIfNeeded(_ lane: Int) {
+        let needed = slotCount(in: lane)
+        if needed == 0 {
+            slotWeights.removeValue(forKey: lane)
+        } else if var w = slotWeights[lane], w.count > needed {
+            w.removeLast(w.count - needed)
+            slotWeights[lane] = w
         }
-        return seen.sorted()
-    }
-
-    /// Columns that are completely empty (no window touches them).
-    var emptyCols: [Int] {
-        let used = Set(usedCols)
-        return (0..<shape.cols).filter { !used.contains($0) }
-    }
-
-    var emptyRows: [Int] {
-        let used = Set(usedRows)
-        return (0..<shape.rows).filter { !used.contains($0) }
     }
 }
 
-// MARK: - Geometry: track collapsing
+// MARK: - Geometry (orientation-aware)
 
 extension GridLayout {
-    /// Resolve a placement to a screen-space rectangle inside `available`.
+    /// Resolve a window's screen-space rect. `available` is post-outer-gap
+    /// workspace rect; `innerGap` separates adjacent USED lanes and
+    /// adjacent slots within a lane.
     ///
-    /// Empty rows/columns collapse — only `usedCols` × `usedRows` cells are
-    /// rendered, sized equally inside `available`. `innerGap` separates
-    /// adjacent USED cells (not absolute cells); outer gaps must already be
-    /// applied to `available` by the caller.
+    /// Empty lanes collapse: only `usedLanes` are rendered, equal extent
+    /// along the lane axis.
     func resolveRect(
         for windowId: WindowId,
         in available: Rect,
         innerGap: CGFloat = 0
     ) -> Rect? {
         guard let span = placements[windowId] else { return nil }
+        let used = usedLanes
+        guard !used.isEmpty else { return nil }
+        guard let visIdx = used.firstIndex(of: span.lane) else { return nil }
 
-        let usedColsList = usedCols
-        let usedRowsList = usedRows
-        guard !usedColsList.isEmpty, !usedRowsList.isEmpty else { return nil }
+        // Lane axis: equal partition of `available` along the lane axis.
+        let nLanes = CGFloat(used.count)
+        let totalLaneGap = max(0, nLanes - 1) * innerGap
 
-        // Map absolute (col, row) → used index.
-        // Span covers absolute cols [col0..col1]; intersect with usedCols.
-        let spanUsedCols = usedColsList.enumerated()
-            .filter { (_, absCol) in span.col0 <= absCol && absCol <= span.col1 }
-            .map { $0.offset }
-        let spanUsedRows = usedRowsList.enumerated()
-            .filter { (_, absRow) in span.row0 <= absRow && absRow <= span.row1 }
-            .map { $0.offset }
+        // Slot axis: weighted partition of the lane.
+        let slots = slotCount(in: span.lane)
+        guard slots > 0, span.slot0 < slots, span.slot1 < slots else { return nil }
+        var weights: [CGFloat] = []
+        for s in 0..<slots { weights.append(slotWeight(lane: span.lane, slot: s)) }
+        let totalWeight = weights.reduce(0, +)
+        guard totalWeight > 0 else { return nil }
+        let totalSlotGap = max(0, CGFloat(slots - 1)) * innerGap
 
-        guard let cFirst = spanUsedCols.first, let cLast = spanUsedCols.last,
-              let rFirst = spanUsedRows.first, let rLast = spanUsedRows.last
-        else { return nil }
-
-        let nCols = CGFloat(usedColsList.count)
-        let nRows = CGFloat(usedRowsList.count)
-
-        // Total gap budget: (n-1) gaps between n cells.
-        let totalColGap = max(0, nCols - 1) * innerGap
-        let totalRowGap = max(0, nRows - 1) * innerGap
-        let cellW = (available.width - totalColGap) / nCols
-        let cellH = (available.height - totalRowGap) / nRows
-
-        let x0 = available.topLeftX + CGFloat(cFirst) * (cellW + innerGap)
-        let y0 = available.topLeftY + CGFloat(rFirst) * (cellH + innerGap)
-        let spanCols = CGFloat(cLast - cFirst + 1)
-        let spanRows = CGFloat(rLast - rFirst + 1)
-        let w = spanCols * cellW + max(0, spanCols - 1) * innerGap
-        let h = spanRows * cellH + max(0, spanRows - 1) * innerGap
-
-        return Rect(topLeftX: x0, topLeftY: y0, width: w, height: h)
+        switch shape.orientation {
+            case .landscape:
+                // Lane axis = X, slot axis = Y.
+                let laneW = (available.width - totalLaneGap) / nLanes
+                let usableH = available.height - totalSlotGap
+                let x = available.topLeftX + CGFloat(visIdx) * (laneW + innerGap)
+                var y0 = available.topLeftY
+                for s in 0..<span.slot0 { y0 += weights[s] / totalWeight * usableH + innerGap }
+                var spanW: CGFloat = 0
+                for s in span.slot0...span.slot1 { spanW += weights[s] }
+                let h = spanW / totalWeight * usableH + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
+                return Rect(topLeftX: x, topLeftY: y0, width: laneW, height: h)
+            case .portrait:
+                // Lane axis = Y, slot axis = X.
+                let laneH = (available.height - totalLaneGap) / nLanes
+                let usableW = available.width - totalSlotGap
+                let y = available.topLeftY + CGFloat(visIdx) * (laneH + innerGap)
+                var x0 = available.topLeftX
+                for s in 0..<span.slot0 { x0 += weights[s] / totalWeight * usableW + innerGap }
+                var spanW: CGFloat = 0
+                for s in span.slot0...span.slot1 { spanW += weights[s] }
+                let w = spanW / totalWeight * usableW + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
+                return Rect(topLeftX: x0, topLeftY: y, width: w, height: laneH)
+        }
     }
 }
 
 // MARK: - Placement heuristic
 
 extension GridLayout {
-    /// Decide where a brand-new (or restored-without-memory) window should go.
-    /// See `docs/MUR_DESIGN.md` § "New-window placement heuristic".
-    ///
-    /// `focusedWindowCol` is the column of the currently focused tiled
-    /// window, if any (used for tie-breaking when multiple empty columns
-    /// exist). `nil` means there's no focused tiled window.
-    func placementForNewWindow(focusedWindowCol: Int? = nil) -> TileSpan {
-        let used = usedCols
+    /// Decide where a new window goes. See docs/MUR_DESIGN.md.
+    /// `focusedLane` is the lane of the currently focused tiled window.
+    func placementForNewWindow(focusedLane: Int? = nil) -> TileSpan {
+        let used = usedLanes
 
-        // Case 1: empty workspace — middle column, full rows.
-        if used.isEmpty {
-            return .column(shape.middleCol, in: shape)
-        }
+        // Empty workspace → middle lane, sole slot.
+        if used.isEmpty { return .soleSlot(lane: shape.middleLane) }
 
-        // Case 2: exactly one column in use.
+        // Single lane in use: prefer adjacent empty lane.
         if used.count == 1 {
-            let cStar = used[0]
-            let leftEmpty = cStar - 1 >= 0 && emptyCols.contains(cStar - 1)
-            let rightEmpty = cStar + 1 < shape.cols && emptyCols.contains(cStar + 1)
-            // Prefer the side with more empty space (further from cStar).
-            // Tiebreak: right.
+            let lStar = used[0]
+            let leftEmpty = lStar - 1 >= 0 && !used.contains(lStar - 1)
+            let rightEmpty = lStar + 1 < shape.lanes && !used.contains(lStar + 1)
             switch (leftEmpty, rightEmpty) {
                 case (true, true):
-                    let leftSpace = cStar
-                    let rightSpace = shape.cols - 1 - cStar
-                    return .column(rightSpace >= leftSpace ? cStar + 1 : cStar - 1, in: shape)
-                case (true, false): return .column(cStar - 1, in: shape)
-                case (false, true): return .column(cStar + 1, in: shape)
-                case (false, false): break // fall through
+                    let leftSpace = lStar
+                    let rightSpace = shape.lanes - 1 - lStar
+                    return .soleSlot(lane: rightSpace >= leftSpace ? lStar + 1 : lStar - 1)
+                case (true, false): return .soleSlot(lane: lStar - 1)
+                case (false, true): return .soleSlot(lane: lStar + 1)
+                case (false, false): break
             }
         }
 
-        // Case 3: any fully-empty column exists — pick nearest to focused.
-        let empties = emptyCols
+        // Multi-lane and empty lane exists → nearest to focus.
+        let empties = emptyLanes
         if !empties.isEmpty {
-            let anchor = focusedWindowCol ?? shape.middleCol
+            let anchor = focusedLane ?? shape.middleLane
             let nearest = empties.min { abs($0 - anchor) < abs($1 - anchor) } ?? empties[0]
-            return .column(nearest, in: shape)
+            return .soleSlot(lane: nearest)
         }
 
-        // Case 4: no empty column — overlap the middle column. Stacking ftw.
-        return .column(shape.middleCol, in: shape)
+        // No empty lane: ADD a new slot at the bottom of the focused lane
+        // (or middle if no focus). Per-lane flexible slots make this
+        // preferable to overlapping.
+        let targetLane = focusedLane ?? shape.middleLane
+        let newSlot = slotCount(in: targetLane)
+        return .single(lane: targetLane, slot: newSlot)
     }
 }
