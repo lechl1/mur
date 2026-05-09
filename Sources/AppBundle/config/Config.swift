@@ -60,6 +60,11 @@ struct Config: ConvenienceCopyable {
     var modes: [String: Mode] = [:]
     var onWindowDetected: [WindowDetectedCallback] = []
     var onModeChanged: [any Command] = []
+
+    /// mur phase 1 feature flag. Default false → behaves exactly like
+    /// AeroSpace. When true, workspaces use the column-major grid layout
+    /// (see docs/MUR_DESIGN.md) instead of the tree-based one.
+    var experimentalGridLayout: Bool = false
 }
 
 enum DefaultContainerOrientation: String {
