@@ -42,6 +42,7 @@ struct GridPlaceCommand: Command {
 
         let span = TileSpan(lane: lane, slot0: slot0, slot1: slot1)
         workspace.gridLayout.place(window.windowId, at: span)
+        GridHud.shared.update(layout: workspace.gridLayout, span: span)
 
         // Persist to WindowMemory so future opens of the same app+title
         // restore here. Title fetch is async; do it best-effort.

@@ -86,6 +86,7 @@ struct GridMoveCommand: Command {
 
         let span = TileSpan(lane0: newLane0, lane1: newLane1, slot0: newSlot0, slot1: newSlot1)
         layout.place(window.windowId, at: span)
+        GridHud.shared.update(layout: layout, span: span)
         Task { @MainActor in
             let appId = window.app.rawAppBundleId ?? ""
             let title = (try? await window.title) ?? ""
