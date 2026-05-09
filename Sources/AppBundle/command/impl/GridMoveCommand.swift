@@ -5,15 +5,25 @@ import Foundation
 /// `mur grid-move <left|down|up|right>` — move the focused window one
 /// tile in the given cardinal direction.
 ///
-///   left   lane -= 1, slot stays the same (clamped to first slot of new lane).
-///   right  lane += 1, slot stays the same (clamped likewise).
-///   up     slot -= 1 within current lane.
-///   down   slot += 1 within current lane. Past the last slot, the lane
-///          gains a new slot at the bottom.
+/// Lane axis (left/right in landscape, up/down in portrait) uses a
+/// **bloom-and-contract** sequence so a series of presses traces a
+/// natural arc across the grid:
 ///
-/// Lane changes that hit the edge clamp at 0 / `lanes-1` (no wrap).
-/// Slot changes that hit the top clamp at 0 (no wrap); the bottom
-/// extends rather than clamps.
+///   start lane 0     pressing right →
+///       (0,0) → (0,1) → (0,2) → (1,2) → (2,2)
+///       1-wide   2-wide  3-wide  2-wide  1-wide
+///
+/// Symmetric in reverse: pressing left from (2,2) walks back along the
+/// same chain. The window grows by extending the trailing edge while it
+/// has room, then contracts from the leading edge once it hits the far
+/// wall. This gives the user a visible "wave" through the grid instead
+/// of teleporting from edge to edge.
+///
+/// Slot axis (up/down in landscape, left/right in portrait) keeps the
+/// simple single-step semantics:
+///   - upward / leftward → slot0 -= 1, clamped at 0.
+///   - downward / rightward → slot0 += 1, lane extends past the bottom.
+///   - slotCount is preserved across the move.
 struct GridMoveCommand: Command {
     let args: GridMoveCmdArgs
     /*conforms*/ let shouldResetClosedWindowsCache = false
@@ -36,29 +46,42 @@ struct GridMoveCommand: Command {
         }
 
         let shape = layout.shape
+        // Translate the cardinal direction into (axis, signum) given the
+        // current orientation. `isLaneAxis` selects the bloom path; the
+        // slot axis stays single-step.
+        let isLaneAxis: Bool
+        let signum: Int
+        switch (shape.orientation, args.direction.val) {
+            case (.landscape, .left):  (isLaneAxis, signum) = (true,  -1)
+            case (.landscape, .right): (isLaneAxis, signum) = (true,  +1)
+            case (.landscape, .up):    (isLaneAxis, signum) = (false, -1)
+            case (.landscape, .down):  (isLaneAxis, signum) = (false, +1)
+            case (.portrait,  .up):    (isLaneAxis, signum) = (true,  -1)
+            case (.portrait,  .down):  (isLaneAxis, signum) = (true,  +1)
+            case (.portrait,  .left):  (isLaneAxis, signum) = (false, -1)
+            case (.portrait,  .right): (isLaneAxis, signum) = (false, +1)
+        }
+
         var newLane0 = current.lane0
         var newLane1 = current.lane1
         var newSlot0 = current.slot0
         var newSlot1 = current.slot1
-        switch args.direction.val {
-            case .left:
-                // Shift the whole lane range left by 1, clamped at the edge.
-                if current.lane0 > 0 {
-                    newLane0 = current.lane0 - 1
-                    newLane1 = current.lane1 - 1
-                }
-            case .right:
-                if current.lane1 < shape.lanes - 1 {
-                    newLane0 = current.lane0 + 1
-                    newLane1 = current.lane1 + 1
-                }
-            case .up:
-                newSlot0 = max(0, current.slot0 - 1)
-                newSlot1 = newSlot0 + (current.slot1 - current.slot0)
-            case .down:
-                // Past the bottom: extend the lane by appending a slot.
+
+        if isLaneAxis {
+            (newLane0, newLane1) = GridMove.bloomLaneStep(
+                lane0: current.lane0, lane1: current.lane1,
+                lanes: shape.lanes, signum: signum,
+            )
+        } else {
+            // Slot axis: single-step shift, preserving slotCount. Down /
+            // rightward past the bottom extends the lane.
+            if signum > 0 {
                 newSlot0 = current.slot0 + 1
                 newSlot1 = newSlot0 + (current.slot1 - current.slot0)
+            } else {
+                newSlot0 = max(0, current.slot0 - 1)
+                newSlot1 = newSlot0 + (current.slot1 - current.slot0)
+            }
         }
 
         let span = TileSpan(lane0: newLane0, lane1: newLane1, slot0: newSlot0, slot1: newSlot1)
@@ -70,5 +93,34 @@ struct GridMoveCommand: Command {
             windowMemory.save()
         }
         return .succ
+    }
+}
+
+/// Pure step functions for `grid-move`. Factored out for unit testing.
+enum GridMove {
+    /// One step of the bloom-and-contract walk along the lane axis.
+    /// Returns the next `(lane0, lane1)` given the current state and a
+    /// signum (+1 for "right/down toward higher index", -1 for the
+    /// opposite). The walk is symmetric: applying `+1` then `-1` from
+    /// any state returns to the same state.
+    ///
+    /// Rule:
+    ///   signum > 0:
+    ///     * if `lane1 < lanes-1` → grow trailing edge (lane1 += 1)
+    ///     * else if `lane0 < lane1` → shrink leading edge (lane0 += 1)
+    ///     * else (already at single-cell extreme) → no-op
+    ///   signum < 0: mirrored.
+    static func bloomLaneStep(lane0: Int, lane1: Int, lanes: Int, signum: Int) -> (Int, Int) {
+        precondition(lane0 <= lane1 && lane0 >= 0 && lane1 < lanes,
+                     "bloomLaneStep: invalid input (\(lane0), \(lane1)) in \(lanes) lanes")
+        if signum > 0 {
+            if lane1 < lanes - 1 { return (lane0, lane1 + 1) }
+            if lane0 < lane1     { return (lane0 + 1, lane1) }
+            return (lane0, lane1)
+        } else {
+            if lane0 > 0         { return (lane0 - 1, lane1) }
+            if lane1 > lane0     { return (lane0, lane1 - 1) }
+            return (lane0, lane1)
+        }
     }
 }
