@@ -48,11 +48,20 @@ final class MacApp: AbstractApp {
         // AX requests crash if you send them to yourself
         if pid == myPid { return nil }
 
+        // mur — bound `wip.await()` so a wedged AX-subscription thread
+        // (some apps refuse to respond to AXObserverAddNotification for
+        // 10+ seconds) doesn't deadlock the entire daemon. If the wait
+        // times out we return nil; the background thread keeps running
+        // and may populate `allAppsMap[pid]` later, in which case the
+        // next getOrRegister call returns the cached entry immediately.
+        let wipTimeoutNs: UInt64 = 1_500_000_000 // 1.5s
+
         while true {
             if let existing = allAppsMap[pid] { return existing }
             try checkCancellation()
             if let wip = wipPids[pid] {
-                try await wip.await()
+                let signaled = await Self.awaitOrTimeout(wip, nanoseconds: wipTimeoutNs)
+                if !signaled { return nil }
                 continue
             }
             let wip = AwaitableOneTimeBroadcastLatch()
@@ -80,6 +89,33 @@ final class MacApp: AbstractApp {
             }
             thread.name = "AxAppThread \(nsApp.idForDebug)"
             thread.start()
+        }
+    }
+
+    /// Race `wip.await()` against a sleep. Returns `true` if the latch
+    /// signaled before the deadline, `false` on timeout (or cancel).
+    /// Used by `getOrRegister` so a wedged AX-subscription thread never
+    /// deadlocks the main actor.
+    private static func awaitOrTimeout(
+        _ wip: AwaitableOneTimeBroadcastLatch,
+        nanoseconds: UInt64,
+    ) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do {
+                    try await wip.await()
+                    return true
+                } catch {
+                    return false
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
         }
     }
 

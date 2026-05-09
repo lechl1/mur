@@ -33,7 +33,14 @@ func runHeavyCompleteRefreshSession(
     let res = await Result {
         try await $refreshSessionEvent.withValue(event) {
             try await $_isStartup.withValue(event.isStartup) {
-                let nativeFocused = try await getNativeFocusedWindow()
+                // mur — same fallback as runLightSession: a slow AX
+                // (Chromium etc.) shouldn't crash the heavy refresh.
+                let nativeFocused: Window?
+                do {
+                    nativeFocused = try await getNativeFocusedWindow()
+                } catch is FocusedWindowTimeoutError {
+                    nativeFocused = focus.windowOrNil
+                }
                 if let nativeFocused { try await debugWindowsIfRecording(nativeFocused) }
                 updateFocusCache(nativeFocused)
 
@@ -69,7 +76,16 @@ func runLightSession<T>(
     activeRefreshTask = nil
     return try await $refreshSessionEvent.withValue(event) {
         try await $_isStartup.withValue(event.isStartup) {
-            let nativeFocused = try await getNativeFocusedWindow()
+            // mur — distinguish "AX timed out" from "really no focused
+            // window". On timeout, fall back to the cached `focus` so
+            // keybindings keep working when the frontmost app's AX is
+            // slow (Chromium, Godot, …).
+            let nativeFocused: Window?
+            do {
+                nativeFocused = try await getNativeFocusedWindow()
+            } catch is FocusedWindowTimeoutError {
+                nativeFocused = focus.windowOrNil
+            }
             if let nativeFocused { try await debugWindowsIfRecording(nativeFocused) }
             updateFocusCache(nativeFocused)
             let focusBefore = focus.windowOrNil
