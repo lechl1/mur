@@ -2,6 +2,22 @@ import AppKit
 import Common
 import Foundation
 
+/// Per-window alternation state for `grid-swap` on the lane axis.
+/// Same window + same direction → toggle between OVERLAP (merge into
+/// neighbour as a new row) and ADD-NEW-TILE (insert a new column
+/// between source and neighbour). Direction change OR window change
+/// resets the counter, and the first action of a fresh gesture is
+/// OVERLAP.
+@MainActor private var gridSwapGesture: GridSwapGesture? = nil
+
+@MainActor
+private struct GridSwapGesture {
+    let windowId: WindowId
+    let direction: CardinalDirection
+    /// What the NEXT same-direction press should do.
+    let nextIsOverlap: Bool
+}
+
 /// `mur grid-swap <left|down|up|right>` — swap the focused window's
 /// column / row with the neighbour in the given cardinal direction.
 ///
@@ -29,6 +45,27 @@ struct GridSwapCommand: Command {
         }
         let workspace = target.workspace
         let layout = workspace.gridLayout
+        // Floating window → register it into the grid on first
+        // keybinding press; subsequent presses run the move as usual.
+        // Same affordance as `grid-move` so ctrl-alt-arrow can also be
+        // used to "tile" a floating window in one keystroke.
+        if layout.placements[window.windowId] == nil {
+            let focusedLane = focus.windowOrNil
+                .flatMap { layout.placements[$0.windowId]?.lane0 }
+            let span = layout.placementForNewWindow(focusedLane: focusedLane)
+            layout.place(window.windowId, at: span)
+            GridHud.shared.update(layout: layout, span: span)
+            // Reset the alternation so the next ctrl-alt-arrow starts
+            // a fresh OVERLAP-first gesture from the new tile.
+            gridSwapGesture = nil
+            Task { @MainActor in
+                let appId = window.app.rawAppBundleId ?? ""
+                let title = (try? await window.title) ?? ""
+                windowMemory.remember(appId: appId, title: title, shape: layout.shape, span: span)
+                windowMemory.save()
+            }
+            return .succ
+        }
         guard let current = layout.placements[window.windowId] else {
             io.err("window \(window.windowId) is not in the grid (use grid-place to add it)")
             return .fail
@@ -49,37 +86,61 @@ struct GridSwapCommand: Command {
         }
 
         if isLaneAxis {
-            // Merge into neighbour lane as a new bottom slot ("move
-            // through" semantics — not swap). Source lane is left for
-            // `compactGaps()` in `place()` to rebalance / remove.
+            // Lane-axis press alternates between OVERLAP and
+            // ADD-NEW-TILE on consecutive same-direction presses.
+            // Direction change OR window change resets the counter,
+            // and the first action of a fresh gesture is OVERLAP.
+            let dir = args.direction.val
+            let isOverlap: Bool
+            if let g = gridSwapGesture, g.windowId == window.windowId, g.direction == dir {
+                isOverlap = g.nextIsOverlap
+            } else {
+                isOverlap = true
+            }
+            gridSwapGesture = GridSwapGesture(
+                windowId: window.windowId, direction: dir, nextIsOverlap: !isOverlap,
+            )
+
             let myLane = signum > 0 ? current.lane1 : current.lane0
             let used = layout.usedLanes
             guard let visIdx = used.firstIndex(of: myLane) else { return .succ }
             let neighborVisIdx = signum > 0 ? visIdx + 1 : visIdx - 1
+            let hasLaneMates = layout.windows(in: myLane).count >= 2
             if neighborVisIdx >= 0 && neighborVisIdx < used.count {
-                let targetLane = used[neighborVisIdx]
-                // Pick the row insertion point from the focused window's
-                // current vertical center (horizontal in portrait), so a
-                // window dragged into a column "lands" next to the row
-                // it's visually closest to instead of always at the bottom.
-                let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
-                let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
-                let slotGap = CGFloat(resolved.inner.get(
-                    layout.shape.orientation == .landscape ? .v : .h,
-                ))
-                let focusedRect = window.lastAppliedLayoutPhysicalRect
-                    ?? layout.resolveRect(for: window.windowId, in: available, innerGap: slotGap)
-                let center = focusedRect?.center ?? available.center
-                let insertAt = layout.insertionSlot(in: targetLane, at: center, available: available, innerGap: slotGap)
-                layout.insertSlot(in: targetLane, at: insertAt)
-                layout.place(window.windowId, at: TileSpan(
-                    lane0: targetLane, lane1: targetLane,
-                    slot0: insertAt, slot1: insertAt,
-                ))
-            } else if layout.windows(in: myLane).count >= 2 {
-                // Outward press at leftmost / rightmost column with 2+
-                // rows → extract focused into a brand new column.
-                // Siblings stay behind in the original lane.
+                if isOverlap {
+                    // OVERLAP: pick the existing window in the adjacent
+                    // column whose centre is closest to focused's
+                    // current centre (position-aware), and place focused
+                    // at that same slot — the two windows share the
+                    // cell and visually overlap (z-order decides front).
+                    let targetLane = used[neighborVisIdx]
+                    let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+                    let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
+                    let sg = CGFloat(resolved.inner.get(
+                        layout.shape.orientation == .landscape ? .v : .h,
+                    ))
+                    let focusedRect = window.lastAppliedLayoutPhysicalRect
+                        ?? layout.resolveRect(for: window.windowId, in: available, innerGap: sg)
+                    let center = focusedRect?.center ?? available.center
+                    let targetSlot = layout.nearestOccupiedSlot(
+                        in: targetLane, to: center, available: available, innerGap: sg,
+                    ) ?? 0
+                    layout.place(window.windowId, at: TileSpan(
+                        lane0: targetLane, lane1: targetLane,
+                        slot0: targetSlot, slot1: targetSlot,
+                    ))
+                } else {
+                    // ADD-NEW-TILE: insert a fresh lane between source
+                    // and neighbour; focused moves into it alone.
+                    let insertIdx = signum > 0 ? myLane + 1 : myLane
+                    layout.insertLane(at: insertIdx)
+                    layout.place(window.windowId, at: TileSpan(
+                        lane0: insertIdx, lane1: insertIdx,
+                        slot0: 0, slot1: 0,
+                    ))
+                }
+            } else if hasLaneMates {
+                // Outward press at edge while overlapping → new column.
                 if signum > 0 {
                     let nextEmpty = (used.last ?? -1) + 1
                     let target = nextEmpty < layout.shape.lanes ? nextEmpty : layout.appendLane()
@@ -95,21 +156,33 @@ struct GridSwapCommand: Command {
                     ))
                 }
             } else {
-                // Outward press at the leftmost / rightmost column with
-                // no spare → shrink the focused column.
+                // Outward press at edge, alone → shrink.
                 GridMove.resizeLane(layout: layout, lane: myLane, signum: -1)
             }
         } else {
-            // Slot axis (top/bottom in landscape, left/right in portrait)
-            // mirrors the lane-axis edge fallback: at the slot edge with
-            // no neighbour, shrink the focused row instead of extending.
-            // Off-screen presses never create new rows; users can grow a
-            // row back with cmd-alt-arrows (the resize ladder).
+            // Slot axis (top/bottom in landscape, left/right in portrait).
+            //   - slot-mates exist (focused shares the cell with another
+            //     window) → EXTRACT focused into a fresh slot in the
+            //     press direction so the two windows un-overlap.
+            //   - neighbour slot exists → swap.
+            //   - edge, no slot-mates → shrink the row.
             let myLane = current.lane0
             let mySlot = signum > 0 ? current.slot1 : current.slot0
             let slots = layout.slotCount(in: myLane)
             let neighborSlot = signum > 0 ? mySlot + 1 : mySlot - 1
-            if neighborSlot >= 0 && neighborSlot < slots {
+            let slotMates = layout.placements.contains { wid, span in
+                wid != window.windowId
+                    && span.lane0 <= myLane && myLane <= span.lane1
+                    && span.slot0 <= mySlot && mySlot <= span.slot1
+            }
+            if slotMates {
+                let insertAt = signum > 0 ? mySlot + 1 : mySlot
+                layout.insertSlot(in: myLane, at: insertAt)
+                layout.place(window.windowId, at: TileSpan(
+                    lane0: myLane, lane1: myLane,
+                    slot0: insertAt, slot1: insertAt,
+                ))
+            } else if neighborSlot >= 0 && neighborSlot < slots {
                 layout.swapSlots(in: myLane, mySlot, neighborSlot)
             } else {
                 GridMove.resizeSlot(layout: layout, lane: myLane, slot: mySlot, signum: -1)

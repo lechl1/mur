@@ -256,21 +256,33 @@ final class GridLayout {
 
     /// Insert a new lane at index 0, shifting every existing placement,
     /// slot-weight key, and lane-weight entry one position to the right.
-    /// Used by `grid-swap` at the leading edge.
-    func insertLaneAtFront() {
+    func insertLaneAtFront() { insertLane(at: 0) }
+
+    /// Insert a new lane at `idx`. Placements with `lane0 >= idx` shift
+    /// right by 1; slot-weight keys and lane-weight entries shift to
+    /// match. Used by `grid-swap` for the "extract between source and
+    /// neighbour" step of the two-step inward move.
+    func insertLane(at idx: Int) {
+        guard idx >= 0, idx <= shape.lanes else { return }
         var newPlacements: [WindowId: TileSpan] = [:]
         for (wid, span) in placements {
-            newPlacements[wid] = TileSpan(
-                lane0: span.lane0 + 1, lane1: span.lane1 + 1,
-                slot0: span.slot0, slot1: span.slot1,
-            )
+            if span.lane0 >= idx {
+                newPlacements[wid] = TileSpan(
+                    lane0: span.lane0 + 1, lane1: span.lane1 + 1,
+                    slot0: span.slot0, slot1: span.slot1,
+                )
+            } else {
+                newPlacements[wid] = span
+            }
         }
         placements = newPlacements
         var newSlotWeights: [Int: [CGFloat]] = [:]
-        for (lane, w) in slotWeights { newSlotWeights[lane + 1] = w }
+        for (lane, w) in slotWeights {
+            newSlotWeights[lane >= idx ? lane + 1 : lane] = w
+        }
         slotWeights = newSlotWeights
-        if var lw = _laneWeights {
-            lw.insert(1.0, at: 0)
+        if var lw = _laneWeights, idx <= lw.count {
+            lw.insert(1.0, at: idx)
             _laneWeights = lw
         }
         shape = LayoutShape(orientation: shape.orientation, lanes: shape.lanes + 1)
@@ -302,6 +314,43 @@ final class GridLayout {
         let cap = min(slotIdx, sw.count)
         sw.insert(1.0, at: cap)
         slotWeights[lane] = sw
+    }
+
+    /// Pick the OCCUPIED slot in `lane` whose centre is closest to
+    /// `point`'s slot-axis coordinate (Y in landscape, X in portrait).
+    /// Used by `grid-swap`'s OVERLAP action to land focused on top of
+    /// the existing window the user is "aiming at" instead of always
+    /// using slot 0. Returns nil when the lane is empty.
+    func nearestOccupiedSlot(in lane: Int, to point: CGPoint, available: Rect, innerGap: CGFloat = 0) -> Int? {
+        let occupied = Set(
+            placements.values
+                .filter { $0.lane0 <= lane && lane <= $0.lane1 }
+                .flatMap { $0.slot0...$0.slot1 }
+        )
+        if occupied.isEmpty { return nil }
+        let slots = slotCount(in: lane)
+        guard slots > 0 else { return nil }
+        var weights: [CGFloat] = []
+        for s in 0..<slots { weights.append(slotWeight(lane: lane, slot: s)) }
+        let total = weights.reduce(0, +)
+        guard total > 0 else { return occupied.sorted().first }
+        let landscape = shape.orientation == .landscape
+        let pt = landscape ? point.y : point.x
+        let start = landscape ? available.topLeftY : available.topLeftX
+        let extent = landscape ? available.height : available.width
+        let usable = extent - max(0, CGFloat(slots - 1)) * innerGap
+        var bestSlot: Int? = nil
+        var bestDist: CGFloat = .infinity
+        var c = start
+        for s in 0..<slots {
+            let w = weights[s] / total * usable
+            if occupied.contains(s) {
+                let d = abs(pt - (c + w / 2))
+                if d < bestDist { bestDist = d; bestSlot = s }
+            }
+            c += w + innerGap
+        }
+        return bestSlot
     }
 
     /// Pick the slot index in `lane` that best matches a vertical (or
@@ -558,71 +607,6 @@ extension GridLayout {
                 let w = spanW / totalWeight * usableW + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
                 return Rect(topLeftX: x0, topLeftY: y, width: w, height: laneSpanH)
         }
-    }
-}
-
-// MARK: - Grow-to-fit (rebalance after a window resists shrink)
-
-extension GridLayout {
-    /// Grow `lane`'s weight so its rendered main-axis size hits at least
-    /// `requiredPx`, redistributing the freed weight across other used
-    /// lanes proportionally. No-op if there's only one used lane (no
-    /// donor) or the lane already fits. Floors every other lane at
-    /// 1/16 of the used total — the resize ladder's minimum.
-    @discardableResult
-    func growLaneToFit(requiredPx: CGFloat, lane: Int, totalUsablePx: CGFloat) -> Bool {
-        let used = usedLanes
-        guard used.count >= 2, lane >= 0, lane < shape.lanes, totalUsablePx > 0 else { return false }
-        var weights: [CGFloat] = []
-        for l in 0..<shape.lanes { weights.append(laneWeight(lane: l)) }
-        let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
-        guard usedTotal > 0 else { return false }
-        let pxPerWeight = totalUsablePx / usedTotal
-        let currentPx = weights[lane] * pxPerWeight
-        if currentPx + 1 >= requiredPx { return false }
-        let minOther: CGFloat = usedTotal / 16
-        let maxAllowed = usedTotal - CGFloat(used.count - 1) * minOther
-        let newW = min(requiredPx / pxPerWeight, maxAllowed)
-        if newW <= weights[lane] { return false }
-        let delta = newW - weights[lane]
-        let sumOthers = usedTotal - weights[lane]
-        guard sumOthers > 0 else { return false }
-        weights[lane] = newW
-        for l in used where l != lane {
-            weights[l] -= delta * (weights[l] / sumOthers)
-        }
-        if weights.contains(where: { $0 <= 0 }) { return false }
-        setLaneWeights(weights)
-        return true
-    }
-
-    /// Same idea on the slot axis within `lane`.
-    @discardableResult
-    func growSlotToFit(requiredPx: CGFloat, lane: Int, slot: Int, totalUsablePx: CGFloat) -> Bool {
-        guard 0 <= lane, lane < shape.lanes, totalUsablePx > 0 else { return false }
-        let slots = slotCount(in: lane)
-        guard slots >= 2, slot >= 0, slot < slots else { return false }
-        var weights: [CGFloat] = []
-        for s in 0..<slots { weights.append(slotWeight(lane: lane, slot: s)) }
-        let total = weights.reduce(0, +)
-        guard total > 0 else { return false }
-        let pxPerWeight = totalUsablePx / total
-        let currentPx = weights[slot] * pxPerWeight
-        if currentPx + 1 >= requiredPx { return false }
-        let minOther: CGFloat = total / 16
-        let maxAllowed = total - CGFloat(slots - 1) * minOther
-        let newW = min(requiredPx / pxPerWeight, maxAllowed)
-        if newW <= weights[slot] { return false }
-        let delta = newW - weights[slot]
-        let sumOthers = total - weights[slot]
-        guard sumOthers > 0 else { return false }
-        weights[slot] = newW
-        for s in 0..<slots where s != slot {
-            weights[s] -= delta * (weights[s] / sumOthers)
-        }
-        if weights.contains(where: { $0 <= 0 }) { return false }
-        setSlotWeights(lane: lane, weights: weights)
-        return true
     }
 }
 

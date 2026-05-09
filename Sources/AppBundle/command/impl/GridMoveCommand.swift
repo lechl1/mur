@@ -33,6 +33,24 @@ struct GridMoveCommand: Command {
         }
         let workspace = target.workspace
         let layout = workspace.gridLayout
+        // Floating window → register it into the grid on first keybinding
+        // press. Subsequent presses then run the resize/move as usual.
+        // This lets users "tile" a window with cmd-alt-arrow without
+        // first invoking grid-place explicitly.
+        if layout.placements[window.windowId] == nil {
+            let focusedLane = focus.windowOrNil
+                .flatMap { layout.placements[$0.windowId]?.lane0 }
+            let span = layout.placementForNewWindow(focusedLane: focusedLane)
+            layout.place(window.windowId, at: span)
+            GridHud.shared.update(layout: layout, span: span)
+            Task { @MainActor in
+                let appId = window.app.rawAppBundleId ?? ""
+                let title = (try? await window.title) ?? ""
+                windowMemory.remember(appId: appId, title: title, shape: layout.shape, span: span)
+                windowMemory.save()
+            }
+            return .succ
+        }
         guard let current = layout.placements[window.windowId] else {
             io.err("window \(window.windowId) is not in the grid (use grid-place to add it)")
             return .fail
@@ -72,22 +90,24 @@ struct GridMoveCommand: Command {
 
 /// Pure resize functions for `grid-move`. Factored out for unit testing.
 enum GridMove {
-    /// Discrete ladder of fractions the resize snaps to. Values run
-    /// 1/16, 1/15, …, 1/3, 1/2, 2/3, 3/4, …, 15/16 — symmetric around
-    /// 1/2. A press in the shrink direction picks the next-smaller
-    /// rung, a press in the grow direction picks the next-larger.
+    /// Discrete ladder of fractions the resize snaps to. Symmetric
+    /// around 1/2. The base rungs are 1/N and (N-1)/N for N=2..16, and
+    /// midpoints between every adjacent pair are inserted so a single
+    /// press feels finer than the natural 1/N step (especially in the
+    /// middle, where the gap between 1/2 and 1/3 is widest).
     static let resizeFractionLadder: [CGFloat] = {
-        var ladder: [CGFloat] = []
+        var base: [CGFloat] = []
         let MAX_N = 16
-        // Shrink half: 1/MAX_N → 1/2.
-        for n in (2...MAX_N).reversed() {
-            ladder.append(1.0 / CGFloat(n))
+        for n in (2...MAX_N).reversed() { base.append(1.0 / CGFloat(n)) }
+        for n in 3...MAX_N { base.append(CGFloat(n - 1) / CGFloat(n)) }
+        var dense: [CGFloat] = []
+        for (i, r) in base.enumerated() {
+            dense.append(r)
+            if i + 1 < base.count {
+                dense.append((r + base[i + 1]) / 2.0)
+            }
         }
-        // Grow half: 2/3 → (MAX_N-1)/MAX_N. (1/2 already in ladder.)
-        for n in 3...MAX_N {
-            ladder.append(CGFloat(n - 1) / CGFloat(n))
-        }
-        return ladder
+        return dense
     }()
 
     /// Index in `resizeFractionLadder` of the rung closest to `f`.

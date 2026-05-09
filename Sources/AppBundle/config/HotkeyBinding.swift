@@ -4,6 +4,10 @@ import Foundation
 import HotKey
 
 @MainActor private var hotkeys: [String: HotKey] = [:]
+/// Per-binding press-and-hold auto-repeat tasks. Cancelled on key-up
+/// (and also on resetHotKeys to drop any in-flight repeats when the
+/// config reloads).
+@MainActor private var hotkeyRepeatTasks: [String: Task<Void, Never>] = [:]
 
 @MainActor func resetHotKeys() {
     // Explicitly unregister all hotkeys. We cannot always rely on destruction of the HotKey object to trigger
@@ -12,6 +16,8 @@ import HotKey
         key.isEnabled = false
     }
     hotkeys = [:]
+    for (_, task) in hotkeyRepeatTasks { task.cancel() }
+    hotkeyRepeatTasks = [:]
 }
 
 extension HotKey {
@@ -29,7 +35,16 @@ extension HotKey {
 @MainActor func activateMode(_ targetMode: String?) async throws {
     let targetBindings = targetMode.flatMap { config.modes[$0] }?.bindings ?? [:]
     for binding in targetBindings.values where !hotkeys.keys.contains(binding.descriptionWithKeyCode) {
-        hotkeys[binding.descriptionWithKeyCode] = HotKey(key: binding.keyCode, modifiers: binding.modifiers, keyDownHandler: {
+        // mur — grid-move (resize) and grid-swap (move) both auto-repeat
+        // on press-and-hold. grid-swap repeats are useful at the screen
+        // edge where the command falls through to the same resize logic
+        // as grid-move, and elsewhere they keep ramping the alternation
+        // / chained extract → shrink. Other commands fire once per press.
+        let isRepeatable = binding.commands.contains {
+            $0 is GridMoveCommand || $0 is GridSwapCommand
+        }
+        let bindingKey = binding.descriptionWithKeyCode
+        let fire: @MainActor () -> Void = {
             Task {
                 if let activeMode {
                     broadcastEvent(.bindingTriggered(
@@ -37,12 +52,43 @@ extension HotKey {
                         binding: binding.descriptionWithKeyNotation,
                     ))
                     try await runLightSession(.hotkeyBinding, .checkServerIsEnabledOrDie()) { () throws in
-                        _ = try await config.modes[activeMode]?.bindings[binding.descriptionWithKeyCode]?.commands
+                        _ = try await config.modes[activeMode]?.bindings[bindingKey]?.commands
                             .runCmdSeq(.defaultEnv, .emptyStdin)
                     }
                 }
             }
-        })
+        }
+        let hotkey = HotKey(
+            key: binding.keyCode,
+            modifiers: binding.modifiers,
+            keyDownHandler: {
+                Task { @MainActor in
+                    fire()
+                    guard isRepeatable else { return }
+                    hotkeyRepeatTasks[bindingKey]?.cancel()
+                    hotkeyRepeatTasks[bindingKey] = Task { @MainActor in
+                        // Initial hold delay before auto-repeat kicks in
+                        // (matches typical OS key-repeat).
+                        try? await Task.sleep(nanoseconds: 350_000_000)
+                        if Task.isCancelled { return }
+                        // ~20Hz repeat (50ms) — fast enough to feel like
+                        // a continuous resize, slow enough to debounce
+                        // multiple ladder steps comfortably.
+                        while !Task.isCancelled {
+                            fire()
+                            try? await Task.sleep(nanoseconds: 50_000_000)
+                        }
+                    }
+                }
+            },
+            keyUpHandler: isRepeatable ? {
+                Task { @MainActor in
+                    hotkeyRepeatTasks[bindingKey]?.cancel()
+                    hotkeyRepeatTasks[bindingKey] = nil
+                }
+            } : nil,
+        )
+        hotkeys[bindingKey] = hotkey
     }
     for (binding, key) in hotkeys {
         key.isEnabled = targetBindings.keys.contains(binding)

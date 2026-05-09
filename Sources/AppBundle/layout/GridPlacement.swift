@@ -7,6 +7,14 @@ import Common
 /// `remember(...)` via the explicit `save()` call below.
 @MainActor let windowMemory = WindowMemory()
 
+/// App bundle IDs whose windows we've previously observed as
+/// non-resizable (the auto-float branch in `layoutWorkspaceWithGrid`
+/// sets this). New windows of these apps skip grid registration on
+/// open and stay floating, so we never see the brief in-grid flash
+/// before the float kicks in. In-memory only — apps not seen yet
+/// still go through the regular auto-float dance once.
+@MainActor var knownNonResizableAppIds: Set<String> = []
+
 /// mur — phase 1.4 entry point.
 ///
 /// Called from `MacWindow.getOrRegister` after the window has been bound
@@ -56,6 +64,11 @@ func tryRegisterInGridLayout(_ window: Window) {
     // `mur grid-move`, which run outside the startup hot path and
     // can safely await window.title there.
     let appId = window.app.rawAppBundleId ?? ""
+    // Skip grid registration for apps we've previously observed as
+    // non-resizable — they'd just be auto-floated milliseconds later
+    // anyway. Leaving them as floating from the start avoids the
+    // in-grid flash and a wasted setAxFrame round-trip.
+    if !appId.isEmpty && knownNonResizableAppIds.contains(appId) { return }
     let shape = workspace.gridLayout.shape
 
     let span: TileSpan
