@@ -37,6 +37,9 @@ final class MacWindow: Window {
         if try await !restoreClosedWindowsCacheIfNeeded(newlyDetectedWindow: window) {
             try await tryOnWindowDetected(window)
         }
+        // mur — phase 1.4. Mirror the new window into its workspace's
+        // GridLayout when the experimental flag is on. No-op otherwise.
+        try await tryRegisterInGridLayout(window)
         return window
     }
 
