@@ -7,17 +7,18 @@ import Foundation
 ///
 /// Lane axis (left/right in landscape, up/down in portrait) uses a
 /// **bloom-and-contract** sequence so a series of presses traces a
-/// natural arc across the grid:
+/// natural arc across the grid. With 6 rigid lanes, pressing right from
+/// (0,0):
 ///
-///   start lane 0     pressing right →
-///       (0,0) → (0,1) → (0,2) → (1,2) → (2,2)
-///       1-wide   2-wide  3-wide  2-wide  1-wide
+///       (0,0) → (0,1) → (0,2) → (0,3) → (0,4) → (0,5) →
+///       (1,5) → (2,5) → (3,5) → (4,5) → (5,5)
+///       1-wide  2-wide  3-wide  4-wide  5-wide  6-wide
+///       5-wide  4-wide  3-wide  2-wide  1-wide
 ///
-/// Symmetric in reverse: pressing left from (2,2) walks back along the
-/// same chain. The window grows by extending the trailing edge while it
-/// has room, then contracts from the leading edge once it hits the far
-/// wall. This gives the user a visible "wave" through the grid instead
-/// of teleporting from edge to edge.
+/// The window grows by extending the trailing edge while it has room,
+/// then contracts from the leading edge once it hits the far wall.
+/// Symmetric in reverse: pressing left from (5,5) walks back along the
+/// same chain.
 ///
 /// Slot axis (up/down in landscape, left/right in portrait) keeps the
 /// simple single-step semantics:
@@ -46,9 +47,6 @@ struct GridMoveCommand: Command {
         }
 
         let shape = layout.shape
-        // Translate the cardinal direction into (axis, signum) given the
-        // current orientation. `isLaneAxis` selects the bloom path; the
-        // slot axis stays single-step.
         let isLaneAxis: Bool
         let signum: Int
         switch (shape.orientation, args.direction.val) {
@@ -73,8 +71,6 @@ struct GridMoveCommand: Command {
                 lanes: shape.lanes, signum: signum,
             )
         } else {
-            // Slot axis: single-step shift, preserving slotCount. Down /
-            // rightward past the bottom extends the lane.
             if signum > 0 {
                 newSlot0 = current.slot0 + 1
                 newSlot1 = newSlot0 + (current.slot1 - current.slot0)

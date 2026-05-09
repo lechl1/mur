@@ -30,8 +30,8 @@ struct LayoutShape: Equatable, Hashable, Codable {
         self.lanes = lanes
     }
 
-    static let landscapeDefault = LayoutShape(orientation: .landscape, lanes: 3)
-    static let portraitDefault  = LayoutShape(orientation: .portrait,  lanes: 3)
+    static let landscapeDefault = LayoutShape(orientation: .landscape, lanes: 6)
+    static let portraitDefault  = LayoutShape(orientation: .portrait,  lanes: 6)
 
     var middleLane: Int { lanes / 2 }
 }
@@ -112,9 +112,11 @@ final class GridLayout {
 
     // MARK: Mutation
 
-    /// Place or move a window to `requested`. Slot indices below may exceed
-    /// the current `slotCount(in:)` — this implicitly grows every covered
-    /// lane. The window is promoted to the top of `zOrder`.
+    /// Place or move a window to `requested`. Slot indices may exceed
+    /// the current `slotCount(in:)` — the lane grows on demand. Lane
+    /// indices are clamped to `0..<shape.lanes` (the lane axis is
+    /// rigid; bloom-style moves never go past it). The window is
+    /// promoted to the top of `zOrder`.
     func place(_ windowId: WindowId, at requested: TileSpan) {
         guard requested.lane0 >= 0, requested.lane1 < shape.lanes else {
             remove(windowId)
@@ -125,7 +127,6 @@ final class GridLayout {
         for lane in requested.lane0...requested.lane1 {
             ensureSlotWeightsCapacity(lane: lane, upTo: requested.slot1)
         }
-        // Compact any old-span lanes that the new span no longer covers.
         if let old = oldSpan {
             for lane in old.lane0...old.lane1 where lane < requested.lane0 || lane > requested.lane1 {
                 compactLaneIfNeeded(lane)
@@ -355,15 +356,21 @@ extension GridLayout {
 // MARK: - Placement heuristic
 
 extension GridLayout {
-    /// Decide where a new window goes. See docs/MUR_DESIGN.md.
-    /// `focusedLane` is the lane of the currently focused tiled window.
+    /// Decide where a new window goes. With 6 rigid lanes:
+    ///
+    ///   - empty workspace → middle lane.
+    ///   - one lane used → an adjacent empty lane (preferring the side
+    ///     with more space, so the focused window doesn't get squashed).
+    ///   - several lanes used + an empty lane exists → nearest empty
+    ///     lane to the focus anchor.
+    ///   - all lanes used → add a new slot at the bottom of the focused
+    ///     lane (or middle if no focus). Stacking is preferable to
+    ///     overlapping.
     func placementForNewWindow(focusedLane: Int? = nil) -> TileSpan {
         let used = usedLanes
 
-        // Empty workspace → middle lane, sole slot.
         if used.isEmpty { return .soleSlot(lane: shape.middleLane) }
 
-        // Single lane in use: prefer adjacent empty lane.
         if used.count == 1 {
             let lStar = used[0]
             let leftEmpty = lStar - 1 >= 0 && !used.contains(lStar - 1)
@@ -379,7 +386,6 @@ extension GridLayout {
             }
         }
 
-        // Multi-lane and empty lane exists → nearest to focus.
         let empties = emptyLanes
         if !empties.isEmpty {
             let anchor = focusedLane ?? shape.middleLane
@@ -387,9 +393,6 @@ extension GridLayout {
             return .soleSlot(lane: nearest)
         }
 
-        // No empty lane: ADD a new slot at the bottom of the focused lane
-        // (or middle if no focus). Per-lane flexible slots make this
-        // preferable to overlapping.
         let targetLane = focusedLane ?? shape.middleLane
         let newSlot = slotCount(in: targetLane)
         return .single(lane: targetLane, slot: newSlot)

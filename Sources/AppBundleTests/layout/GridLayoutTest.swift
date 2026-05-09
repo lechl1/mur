@@ -100,24 +100,23 @@ struct GridLayoutTest {
     // MARK: placement heuristic
 
     @Test func newWindowOnEmptyWorkspaceGoesToMiddleLane() {
+        // 6-lane default → middle lane = 3.
         let layout = GridLayout()
         let span = layout.placementForNewWindow()
-        #expect(span == .soleSlot(lane: 1))
+        #expect(span == .soleSlot(lane: 3))
     }
 
     @Test func newWindowAdjacentToSingleUsedLane() {
         let layout = GridLayout()
         layout.place(1, at: .soleSlot(lane: 0))
         let span = layout.placementForNewWindow()
-        // Both 1 and 2 are empty; right has more space (or tied, prefer right).
+        // Lane 0 used, lane 1 is the adjacent empty (right has more space).
         #expect(span == .soleSlot(lane: 1))
     }
 
     @Test func newWindowAddsSlotWhenAllLanesUsed() {
         let layout = GridLayout()
-        layout.place(1, at: .soleSlot(lane: 0))
-        layout.place(2, at: .soleSlot(lane: 1))
-        layout.place(3, at: .soleSlot(lane: 2))
+        for l in 0..<6 { layout.place(WindowId(100 + l), at: .soleSlot(lane: l)) }
         // No empty lane; with focus on lane 1, add a new slot to lane 1.
         let span = layout.placementForNewWindow(focusedLane: 1)
         #expect(span == .single(lane: 1, slot: 1))
@@ -154,10 +153,10 @@ struct GridLayoutTest {
     }
 
     @Test func multiLaneSpanContributesToUsedLanes() {
-        let layout = GridLayout(shape: .landscapeDefault)
+        let layout = GridLayout(shape: .landscapeDefault) // 6 lanes
         layout.place(1, at: TileSpan(lane0: 0, lane1: 2, slot0: 0, slot1: 0))
         #expect(layout.usedLanes == [0, 1, 2])
-        #expect(layout.emptyLanes == [])
+        #expect(layout.emptyLanes == [3, 4, 5])
     }
 
     @Test func backwardCompatibleSingleLaneInit() {
@@ -169,6 +168,8 @@ struct GridLayoutTest {
         #expect(span.isSingleLane)
         #expect(span.laneCount == 1)
     }
+
+    // MARK: rigid lane axis
 
     // MARK: zOrder
 

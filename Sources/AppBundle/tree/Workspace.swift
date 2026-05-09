@@ -49,7 +49,7 @@ final class Workspace: TreeNode, NonLeafTreeNodeObject, Hashable, Comparable {
         if let existing = _gridLayout { return existing }
         let mon = workspaceMonitor.visibleRectPaddedByOuterGaps
         let orientation = LayoutOrientation.forMonitor(width: mon.width, height: mon.height)
-        let layout = GridLayout(shape: LayoutShape(orientation: orientation, lanes: 3))
+        let layout = GridLayout(shape: LayoutShape(orientation: orientation, lanes: 6))
         _gridLayout = layout
         return layout
     }

@@ -29,11 +29,10 @@ struct GridResizeTest {
     }
 
     @Test func landscapeRightDragGrowsCurrentLane() {
-        // NEW: lane-axis drag is no longer a no-op. AeroSpace-style:
-        // dragging the right edge grows the current column and shrinks
-        // the next USED column.
+        // 6-lane rigid grid; 2 used lanes (0 and 1). Dragging col 0's
+        // right edge grows col 0 and shrinks col 1. Lanes 2..5 are
+        // unused → their weights are unchanged at 1.0.
         let layout = GridLayout(shape: .landscapeDefault)
-        // 2 lanes used (0 and 1) → each starts at width 450 in 900px.
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
         let last = Rect(topLeftX: 0, topLeftY: 0, width: 450, height: 600)
@@ -43,13 +42,13 @@ struct GridResizeTest {
             lastAppliedRect: last, currentRect: cur,
             available: landscapeAvail, innerGap: 0,
         ))
-        // delta = (150 / 900) * 2 = 0.333. Lane 0 gains, lane 1 loses.
         let lw = result?.laneWeights ?? []
-        #expect(lw.count == 3)
+        #expect(lw.count == 6)
+        // delta total = (150 / 900) * 2 (used total) = 0.333.
         #expect(abs(lw[0] - 1.3333) < 0.01)
         #expect(abs(lw[1] - 0.6666) < 0.01)
-        #expect(lw[2] == 1.0) // lane 2 unused, weight unchanged
-        #expect(result?.slotLane == nil) // no slot-axis drag
+        for unused in 2..<6 { #expect(lw[unused] == 1.0) }
+        #expect(result?.slotLane == nil)
     }
 
     // MARK: portrait — axes flip
@@ -72,7 +71,7 @@ struct GridResizeTest {
     }
 
     @Test func portraitBottomDragGrowsCurrentLane() {
-        // In portrait, lane axis = Y. Bottom drag grows current row (lane).
+        // 6-lane portrait grid, 2 used. Bottom drag grows lane 0.
         let layout = GridLayout(shape: .portraitDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
@@ -84,7 +83,7 @@ struct GridResizeTest {
             available: portraitAvail, innerGap: 0,
         ))
         let lw = result?.laneWeights ?? []
-        #expect(lw.count == 3)
+        #expect(lw.count == 6)
         #expect(abs(lw[0] - 1.3333) < 0.01)
         #expect(abs(lw[1] - 0.6666) < 0.01)
     }
@@ -108,11 +107,12 @@ struct GridResizeTest {
             available: landscapeAvail, innerGap: 0,
         ))
         let lw = result?.laneWeights ?? []
-        #expect(lw.count == 3)
+        #expect(lw.count == 6)
         // delta total = 150 / 900 * 3 = 0.5. Split across 2 → 0.25 each.
         #expect(abs(lw[0] - 1.5) < 0.01)
         #expect(abs(lw[1] - 0.75) < 0.01)
         #expect(abs(lw[2] - 0.75) < 0.01)
+        for unused in 3..<6 { #expect(lw[unused] == 1.0) }
     }
 
     // MARK: jitter and edge cases
