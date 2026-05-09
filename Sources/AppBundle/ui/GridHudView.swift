@@ -2,12 +2,14 @@ import AppKit
 import SwiftUI
 
 /// Floating mini-grid HUD shown when a window is moved or placed via
-/// `mur grid-move` / `mur grid-place`. Renders a small `lanes × max(slots)`
-/// grid with the focused window's span highlighted, then auto-dismisses
-/// after a brief timeout.
+/// `mur grid-move` / `mur grid-place`. Mirrors the on-screen layout
+/// faithfully:
+///   - empty lanes are collapsed (only used lanes appear);
+///   - each lane's width is proportional to its `laneWeight`;
+///   - each cell's secondary-axis size is proportional to its slot weight.
 ///
-/// Lifetime: a single global panel (`GridHud.shared`). Each call to
-/// `update(...)` rebuilds the panel content and resets the dismiss timer.
+/// The currently focused span is highlighted. Auto-dismisses 1.5s after
+/// the last `update(...)`.
 @MainActor final class GridHud: NSPanelHud {
     static var shared: GridHud = GridHud()
     private var timer: Timer?
@@ -20,23 +22,23 @@ import SwiftUI
     func update(layout: GridLayout, span: TileSpan) {
         timer?.invalidate()
         contentView?.subviews.removeAll()
-        // Snapshot the layout. We render at least one cell per lane so
-        // empty lanes are still visible (collapsing them on screen would
-        // hide the bloom-and-contract motion across empty columns).
-        let slotsPerLane = (0..<layout.shape.lanes).map { lane in
-            max(1, layout.slotCount(in: lane))
+        let used = layout.usedLanes
+        let laneWeights = used.map { layout.laneWeight(lane: $0) }
+        let slotsPerLane = used.map { max(1, layout.slotCount(in: $0)) }
+        let slotWeights = zip(used, slotsPerLane).map { lane, slots in
+            (0..<slots).map { layout.slotWeight(lane: lane, slot: $0) }
         }
         let snapshot = GridHudSnapshot(
             orientation: layout.shape.orientation,
-            lanes: layout.shape.lanes,
+            usedLanes: used,
+            laneWeights: laneWeights,
             slotsPerLane: slotsPerLane,
+            slotWeights: slotWeights,
             span: span,
         )
         let hostingView = NSHostingView(rootView: GridHudView(snapshot: snapshot))
         hostingView.frame = NSRect(x: 0, y: 0, width: panelFrame.width, height: panelFrame.height)
         contentView?.addSubview(hostingView)
-        // Top-right of the main monitor with a small margin (Cocoa
-        // coordinate origin is the bottom-left of the screen).
         panelFrame.origin.x = mainMonitor.width - panelFrame.size.width - 20
         panelFrame.origin.y = mainMonitor.height - panelFrame.size.height - 60
         setFrame(panelFrame, display: true)
@@ -55,8 +57,16 @@ import SwiftUI
 
 struct GridHudSnapshot {
     let orientation: LayoutOrientation
-    let lanes: Int
+    /// Used lane indices (sorted ascending). Maps HUD column position →
+    /// real lane index (so span hit-tests use the right value).
+    let usedLanes: [Int]
+    /// Parallel to `usedLanes`. Lane-axis weight per lane.
+    let laneWeights: [CGFloat]
+    /// Parallel to `usedLanes`. ≥ 1.
     let slotsPerLane: [Int]
+    /// Parallel to `usedLanes`. Slot weights for that lane (length matches
+    /// `slotsPerLane`).
+    let slotWeights: [[CGFloat]]
     let span: TileSpan
 }
 
@@ -73,47 +83,76 @@ struct GridHudView: View {
         ZStack {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(.ultraThinMaterial)
-            laneStack.padding(10)
+            GeometryReader { geo in
+                laneStack(in: geo.size)
+            }
+            .padding(10)
         }
         .frame(width: 220, height: 140)
     }
 
     @ViewBuilder
-    private var laneStack: some View {
-        // Landscape: lanes = columns → HStack of VStacks.
-        // Portrait:  lanes = rows    → VStack of HStacks.
+    private func laneStack(in size: CGSize) -> some View {
+        let n = snapshot.usedLanes.count
+        let totalLaneWeight = max(0.0001, snapshot.laneWeights.reduce(0, +))
+        let mainAxis: CGFloat = snapshot.orientation == .landscape ? size.width : size.height
+        let usableMain = mainAxis - CGFloat(max(0, n - 1)) * cellPad
+
         switch snapshot.orientation {
             case .landscape:
                 HStack(spacing: cellPad) {
-                    ForEach(0..<snapshot.lanes, id: \.self) { lane in
-                        slotStack(for: lane)
+                    ForEach(0..<n, id: \.self) { i in
+                        slotStack(at: i)
+                            .frame(
+                                width: snapshot.laneWeights[i] / totalLaneWeight * usableMain,
+                                height: size.height,
+                            )
                     }
                 }
             case .portrait:
                 VStack(spacing: cellPad) {
-                    ForEach(0..<snapshot.lanes, id: \.self) { lane in
-                        slotStack(for: lane)
+                    ForEach(0..<n, id: \.self) { i in
+                        slotStack(at: i)
+                            .frame(
+                                width: size.width,
+                                height: snapshot.laneWeights[i] / totalLaneWeight * usableMain,
+                            )
                     }
                 }
         }
     }
 
     @ViewBuilder
-    private func slotStack(for lane: Int) -> some View {
-        let slots = snapshot.slotsPerLane[lane]
-        switch snapshot.orientation {
-            case .landscape:
-                VStack(spacing: cellPad) {
-                    ForEach(0..<slots, id: \.self) { slot in
-                        cell(lane: lane, slot: slot)
+    private func slotStack(at idx: Int) -> some View {
+        let lane = snapshot.usedLanes[idx]
+        let slots = snapshot.slotsPerLane[idx]
+        let weights = snapshot.slotWeights[idx]
+        let totalSlotWeight = max(0.0001, weights.reduce(0, +))
+        GeometryReader { laneGeo in
+            switch snapshot.orientation {
+                case .landscape:
+                    let usable = laneGeo.size.height - CGFloat(max(0, slots - 1)) * cellPad
+                    VStack(spacing: cellPad) {
+                        ForEach(0..<slots, id: \.self) { slot in
+                            cell(lane: lane, slot: slot)
+                                .frame(
+                                    width: laneGeo.size.width,
+                                    height: weights[slot] / totalSlotWeight * usable,
+                                )
+                        }
                     }
-                }
-            case .portrait:
-                HStack(spacing: cellPad) {
-                    ForEach(0..<slots, id: \.self) { slot in
-                        cell(lane: lane, slot: slot)
+                case .portrait:
+                    let usable = laneGeo.size.width - CGFloat(max(0, slots - 1)) * cellPad
+                    HStack(spacing: cellPad) {
+                        ForEach(0..<slots, id: \.self) { slot in
+                            cell(lane: lane, slot: slot)
+                                .frame(
+                                    width: weights[slot] / totalSlotWeight * usable,
+                                    height: laneGeo.size.height,
+                                )
+                        }
                     }
-                }
+            }
         }
     }
 
