@@ -23,7 +23,7 @@ done
 ./script/check-uncommitted-files.sh
 ./generate.sh --build-version "$build_version" --codesign-identity "$codesign_identity" --generate-git-hash
 
-swift build -c release --arch arm64 --arch x86_64 --product aerospace -Xswiftc -warnings-as-errors # CLI
+swift build -c release --arch arm64 --arch x86_64 --product mur -Xswiftc -warnings-as-errors # CLI
 
 # todo: make xcodebuild use the same toolchain as swift
 # toolchain="$(plutil -extract CFBundleIdentifier raw ~/Library/Developer/Toolchains/swift-6.1-RELEASE.xctoolchain/Info.plist)"
@@ -47,13 +47,13 @@ xcodebuild-pretty .release/xcodebuild.log clean build \
 git checkout .
 
 cp -r ".xcode-build/Build/Products/$xcode_configuration/AeroSpace.app" .release
-cp -r .build/apple/Products/Release/aerospace .release
+cp -r .build/apple/Products/Release/mur .release
 
 ################
 ### SIGN CLI ###
 ################
 
-codesign -s "$codesign_identity" .release/aerospace
+codesign -s "$codesign_identity" .release/mur
 
 ################
 ### VALIDATE ###
@@ -97,13 +97,13 @@ check-contains-hash() {
 }
 
 check-universal-binary .release/AeroSpace.app/Contents/MacOS/AeroSpace
-check-universal-binary .release/aerospace
+check-universal-binary .release/mur
 
 check-contains-hash .release/AeroSpace.app/Contents/MacOS/AeroSpace
-check-contains-hash .release/aerospace
+check-contains-hash .release/mur
 
 codesign -v .release/AeroSpace.app
-codesign -v .release/aerospace
+codesign -v .release/mur
 
 ############
 ### PACK ###
@@ -113,7 +113,7 @@ mkdir -p ".release/AeroSpace-v$build_version/manpage" && cp .man/*.1 ".release/A
 cp -r ./legal ".release/AeroSpace-v$build_version/legal"
 cp -r .shell-completion ".release/AeroSpace-v$build_version/shell-completion"
 cd .release
-    mkdir -p "AeroSpace-v$build_version/bin" && cp -r aerospace "AeroSpace-v$build_version/bin"
+    mkdir -p "AeroSpace-v$build_version/bin" && cp -r mur "AeroSpace-v$build_version/bin"
     cp -r AeroSpace.app "AeroSpace-v$build_version"
     zip -r "AeroSpace-v$build_version.zip" "AeroSpace-v$build_version"
 cd -

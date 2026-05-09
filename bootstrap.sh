@@ -32,7 +32,7 @@
 # After this completes, run:
 #   ./build-debug.sh        # compile (~1-2 min, single-arch)
 #   ./swift-test.sh         # run unit tests including new GridLayoutTest
-#   .debug/aerospace --help # try the freshly built CLI
+#   .debug/mur --help # try the freshly built CLI
 
 set -euo pipefail
 
@@ -180,7 +180,7 @@ Next steps:
   ./build-debug.sh                       # ~1-2 min — compiles AeroSpace+CLI
   ./swift-test.sh                        # runs unit tests including
                                          # GridLayoutTest, GridResizeTest
-  .debug/aerospace --help                # smoke-test the CLI
+  .debug/mur --help                # smoke-test the CLI
 
 Caveats:
 
