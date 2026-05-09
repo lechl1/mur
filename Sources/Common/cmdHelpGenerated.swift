@@ -63,8 +63,14 @@ let grid_float_help_generated = """
 let grid_focus_help_generated = """
     USAGE: grid-focus [-h|--help] [--workspace <workspace>] <lane> <slot>
     """
+let grid_focus_dir_help_generated = """
+    USAGE: grid-focus-dir [-h|--help] [--workspace <workspace>] (left|down|up|right)
+    """
 let grid_info_help_generated = """
     USAGE: grid-info [-h|--help] [--workspace <workspace>]
+    """
+let grid_move_help_generated = """
+    USAGE: grid-move [-h|--help] [--window-id <window-id>] (left|down|up|right)
     """
 let grid_place_help_generated = """
     USAGE: grid-place [-h|--help] [--window-id <window-id>] [--workspace <workspace>] <lane> <slot0> <slot1>

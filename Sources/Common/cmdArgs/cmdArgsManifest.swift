@@ -15,9 +15,11 @@ public enum CmdKind: String, CaseIterable, Equatable, Sendable {
     case focusBackAndForth = "focus-back-and-forth"
     case focusMonitor = "focus-monitor"
     case fullscreen
-    case gridFloat = "grid-float" // mur — phase 2
-    case gridFocus = "grid-focus" // mur — phase 2
-    case gridInfo = "grid-info"   // mur — phase 2
+    case gridFloat = "grid-float"          // mur — phase 2
+    case gridFocus = "grid-focus"          // mur — phase 2
+    case gridFocusDir = "grid-focus-dir"   // mur — phase 2
+    case gridInfo = "grid-info"            // mur — phase 2
+    case gridMove = "grid-move"   // mur — phase 2
     case gridPlace = "grid-place" // mur — phase 2
     case joinWith = "join-with"
     case layout
@@ -84,8 +86,12 @@ func initSubcommands() -> [String: any SubCommandParserProtocol] {
                 result[kind.rawValue] = SubCommandParser(GridFloatCmdArgs.init)
             case .gridFocus:
                 result[kind.rawValue] = SubCommandParser(parseGridFocusCmdArgs)
+            case .gridFocusDir:
+                result[kind.rawValue] = SubCommandParser(GridFocusDirCmdArgs.init)
             case .gridInfo:
                 result[kind.rawValue] = SubCommandParser(GridInfoCmdArgs.init)
+            case .gridMove:
+                result[kind.rawValue] = SubCommandParser(GridMoveCmdArgs.init)
             case .gridPlace:
                 result[kind.rawValue] = SubCommandParser(parseGridPlaceCmdArgs)
             case .joinWith:
