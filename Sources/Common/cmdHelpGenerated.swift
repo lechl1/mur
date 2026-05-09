@@ -57,6 +57,12 @@ let fullscreen_help_generated = """
        OR: fullscreen [-h|--help] off [--window-id <window-id>] [--fail-if-noop]
     """
 // mur — phase 2. Manually written; no .adoc generator entry yet.
+let grid_float_help_generated = """
+    USAGE: grid-float [-h|--help] [--window-id <window-id>] [--workspace <workspace>]
+    """
+let grid_focus_help_generated = """
+    USAGE: grid-focus [-h|--help] [--workspace <workspace>] <lane> <slot>
+    """
 let grid_info_help_generated = """
     USAGE: grid-info [-h|--help] [--workspace <workspace>]
     """

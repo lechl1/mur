@@ -32,6 +32,10 @@ extension CmdArgs {
                 command = FocusMonitorCommand(args: self as! FocusMonitorCmdArgs)
             case .fullscreen:
                 command = FullscreenCommand(args: self as! FullscreenCmdArgs)
+            case .gridFloat:
+                command = GridFloatCommand(args: self as! GridFloatCmdArgs)
+            case .gridFocus:
+                command = GridFocusCommand(args: self as! GridFocusCmdArgs)
             case .gridInfo:
                 command = GridInfoCommand(args: self as! GridInfoCmdArgs)
             case .gridPlace:
