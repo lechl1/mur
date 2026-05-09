@@ -3,12 +3,138 @@ import AppKit
 extension Workspace {
     @MainActor
     func layoutWorkspace() async throws {
+        // mur — phase 1.3. When the experimental grid is enabled AND it
+        // owns at least one window, dispatch to the grid path. Otherwise
+        // fall through to the existing tree-based layout. This means the
+        // tree continues to drive layout for any pre-existing windows
+        // that haven't been migrated into the grid yet.
+        if config.experimentalGridLayout && !gridLayout.isEmpty {
+            try await layoutWorkspaceWithGrid()
+            return
+        }
         if isEffectivelyEmpty { return }
         let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
         // If monitors are aligned vertically and the monitor below has smaller width, then macOS may not allow the
         // window on the upper monitor to take full width. rect.height - 1 resolves this problem
         // But I also faced this problem in monitors horizontal configuration. ¯\_(ツ)_/¯
         try await layoutRecursive(rect.topLeftCorner, width: rect.width, height: rect.height - 1, virtual: rect, LayoutContext(self))
+    }
+
+    /// mur — phase 1.3 grid-based layout dispatch.
+    ///
+    /// Walks `gridLayout.zOrder` back→front and `setAxFrame`s each tiled
+    /// window to the rect resolved from its `TileSpan`. Floating windows
+    /// (direct Window children of this Workspace) are then laid out by
+    /// the existing path. The tree (`rootTilingContainer`) is dormant
+    /// when this method runs.
+    ///
+    /// Z-order: setAxFrame doesn't control front-to-back ordering on its
+    /// own; that's a focus/raise concern handled when a window is
+    /// promoted in `gridLayout`. This function only places geometry.
+    @MainActor
+    fileprivate func layoutWorkspaceWithGrid() async throws {
+        let context = LayoutContext(self)
+        let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
+        // Reshape if monitor orientation has changed since last layout.
+        let mon = rect
+        let nowOrientation = LayoutOrientation.forMonitor(width: mon.width, height: mon.height)
+        if nowOrientation != gridLayout.shape.orientation {
+            _ = gridLayout.reshape(to: LayoutShape(orientation: nowOrientation, lanes: gridLayout.shape.lanes))
+        }
+        // Single-axis inner gap for now (slot axis). Lane-axis gap is
+        // a refinement for a later commit; in the meantime, slots and
+        // lanes share the same gap for visual consistency.
+        let slotGap = CGFloat(context.resolvedGaps.inner.get(
+            gridLayout.shape.orientation == .landscape ? .v : .h
+        ))
+
+        // mur — forced-resize pre-pass. Grow the lane / slot to fit
+        // the cached observed minimum so the upcoming setAxFrame
+        // produces the correct rect first time.
+        //   - Lane-axis grow is gated to single-window-per-tile, since
+        //     widening a lane that's shared with other tiles would
+        //     disrupt the lane-mates' widths uselessly.
+        //   - Slot-axis grow runs regardless of lane occupancy: when a
+        //     window moves up/down in landscape (or left/right in
+        //     portrait) within a column with neighbors, the focused
+        //     slot still grows to its observed min and the neighbour
+        //     slots shrink proportionally.
+        let isLandscape = gridLayout.shape.orientation == .landscape
+        for windowId in gridLayout.zOrder {
+            guard Window.get(byId: windowId) != nil,
+                  let span = gridLayout.placements[windowId],
+                  let minSize = gridLayout.observedMinSizes[windowId] else { continue }
+            if windowId == currentlyManipulatedWithMouseWindowId { continue }
+            let used = gridLayout.usedLanes
+            let totalLaneGap = max(0, CGFloat(used.count - 1)) * slotGap
+            let usableLanePx = (isLandscape ? rect.width : rect.height) - totalLaneGap
+            let slots = gridLayout.slotCount(in: span.lane0)
+            let totalSlotGap = max(0, CGFloat(slots - 1)) * slotGap
+            let usableSlotPx = (isLandscape ? rect.height : rect.width) - totalSlotGap
+            let minLanePx = isLandscape ? minSize.width : minSize.height
+            let minSlotPx = isLandscape ? minSize.height : minSize.width
+            if gridLayout.windows(in: span.lane0).count == 1 {
+                _ = gridLayout.growLaneToFit(requiredPx: minLanePx, lane: span.lane0, totalUsablePx: usableLanePx)
+            }
+            _ = gridLayout.growSlotToFit(requiredPx: minSlotPx, lane: span.lane0, slot: span.slot0, totalUsablePx: usableSlotPx)
+        }
+
+        for windowId in gridLayout.zOrder {
+            guard let window = Window.get(byId: windowId) else { continue }
+            if window.windowId == currentlyManipulatedWithMouseWindowId { continue }
+            guard let r = gridLayout.resolveRect(for: windowId, in: rect, innerGap: slotGap) else { continue }
+            window.lastAppliedLayoutPhysicalRect = r
+            window.lastAppliedLayoutVirtualRect = r
+            window.setAxFrame(r.topLeftCorner, r.size)
+
+            // mur — auto-float non-resizable windows. Once per window:
+            // wait briefly for the resize to settle, then compare the
+            // actual rect against what we asked for. If both dims differ
+            // by more than 150px, the app has a fixed window size we
+            // can't tile — float it. Threshold accommodates min-size
+            // constraints that narrow ONE dimension only.
+            if !gridLayout.verifiedResizableWindows.contains(windowId)
+                && !gridLayout.nonResizableWindows.contains(windowId)
+            {
+                let workspace = self
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    guard let actual = try? await window.getAxRect() else { return }
+                    let widthDiff = abs(actual.width - r.width)
+                    let heightDiff = abs(actual.height - r.height)
+                    if widthDiff > 150 && heightDiff > 150 {
+                        workspace.gridLayout.nonResizableWindows.insert(windowId)
+                        // Remember the app bundle so future windows of
+                        // the same app skip grid registration entirely
+                        // and open as floating.
+                        let appId = window.app.rawAppBundleId ?? ""
+                        if !appId.isEmpty { knownNonResizableAppIds.insert(appId) }
+                        _ = workspace.gridLayout.remove(windowId)
+                        window.bindAsFloatingWindow(to: workspace)
+                        let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+                        let cx = monRect.topLeftX + (monRect.width - actual.width) / 2
+                        let cy = monRect.topLeftY + (monRect.height - actual.height) / 2
+                        window.setAxFrame(CGPoint(x: cx, y: cy), actual.size)
+                    } else {
+                        workspace.gridLayout.verifiedResizableWindows.insert(windowId)
+                    }
+                }
+            }
+            // mur — debounced fit-check. Records the observed min size
+            // + grows the lane / slot if it overflowed. The pre-pass
+            // on the next layout uses the cached size for an instant
+            // correct fit. Slot-axis grow runs regardless of lane
+            // occupancy; lane-axis grow is gated to single-window
+            // tiles inside the check itself.
+            if gridLayout.placements[windowId] != nil {
+                scheduleGridFitCheck(window: window, requested: r, workspace: self, slotGap: slotGap)
+            }
+        }
+        for window in children.filterIsInstance(of: Window.self) {
+            window.lastAppliedLayoutPhysicalRect = nil
+            window.lastAppliedLayoutVirtualRect = nil
+            try await window.layoutFloatingWindow(context)
+        }
     }
 }
 
@@ -51,6 +177,72 @@ extension TreeNode {
                  .macosPopupWindowsContainer, .macosHiddenAppsWindowsContainer:
                 return // Nothing to do for weirdos
         }
+    }
+}
+
+// MARK: - Debounced fit-check (forced resize)
+
+@MainActor private var gridFitCheckTasks: [WindowId: Task<Void, Never>] = [:]
+
+/// Lazily verify that a tile fits its window's actual rect. Cancels
+/// any pending check for the same window, schedules a fresh one 20ms
+/// out, and on fire reads `getAxRect`, caches the observed min size,
+/// and grows the lane / slot via `growLaneToFit` / `growSlotToFit`
+/// if either dimension is over by more than 20px.
+///
+/// Lane-axis grow is gated to single-window tiles (otherwise it would
+/// fight the lane-mates). Slot-axis grow runs regardless of lane
+/// occupancy: when a window moves up/down in a populated column
+/// (landscape) or left/right in a populated row (portrait), the
+/// focused slot grows to its observed min and the neighbour slots
+/// shrink proportionally.
+@MainActor
+fileprivate func scheduleGridFitCheck(window: Window, requested r: Rect, workspace: Workspace, slotGap: CGFloat) {
+    let windowId = window.windowId
+    gridFitCheckTasks[windowId]?.cancel()
+    gridFitCheckTasks[windowId] = Task { @MainActor in
+        try? await Task.sleep(nanoseconds: 20_000_000)
+        if Task.isCancelled { return }
+        guard let actual = try? await window.getAxRect() else { return }
+        let widthOver = actual.width - r.width
+        let heightOver = actual.height - r.height
+        guard widthOver > 20 || heightOver > 20 else { return }
+        guard let span = workspace.gridLayout.placements[windowId] else { return }
+        let layout = workspace.gridLayout
+        var minSize = layout.observedMinSizes[windowId] ?? .zero
+        if widthOver > 20  { minSize.width  = max(minSize.width,  actual.width)  }
+        if heightOver > 20 { minSize.height = max(minSize.height, actual.height) }
+        layout.observedMinSizes[windowId] = minSize
+        let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+        let isLandscape = layout.shape.orientation == .landscape
+        let used = layout.usedLanes
+        let slots = layout.slotCount(in: span.lane0)
+        let totalLaneGap = max(0, CGFloat(used.count - 1)) * slotGap
+        let totalSlotGap = max(0, CGFloat(slots - 1)) * slotGap
+        let usableLanePx = (isLandscape ? monRect.width : monRect.height) - totalLaneGap
+        let usableSlotPx = (isLandscape ? monRect.height : monRect.width) - totalSlotGap
+        let laneOver = isLandscape ? widthOver : heightOver
+        let slotOver = isLandscape ? heightOver : widthOver
+        let requiredLanePx = isLandscape ? actual.width : actual.height
+        let requiredSlotPx = isLandscape ? actual.height : actual.width
+        let isSoloInLane = layout.windows(in: span.lane0).count == 1
+        var changed = false
+        if laneOver > 20 && isSoloInLane {
+            changed = layout.growLaneToFit(
+                requiredPx: requiredLanePx, lane: span.lane0,
+                totalUsablePx: usableLanePx,
+            ) || changed
+        }
+        if slotOver > 20 {
+            changed = layout.growSlotToFit(
+                requiredPx: requiredSlotPx, lane: span.lane0, slot: span.slot0,
+                totalUsablePx: usableSlotPx,
+            ) || changed
+        }
+        if changed {
+            scheduleCancellableCompleteRefreshSession(.ax("grow-to-fit"))
+        }
+        gridFitCheckTasks[windowId] = nil
     }
 }
 

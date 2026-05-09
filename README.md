@@ -1,28 +1,37 @@
-# AeroSpace Beta [![Build](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/nikitabobko/AeroSpace/actions/workflows/build.yml)
+# mur — predefined-grid window manager for macOS
+
+> Fork of [AeroSpace](https://github.com/nikitabobko/AeroSpace) that replaces the
+> tree-based layout engine with **predefined grid layouts** that allow tile
+> spans, stacking, and per-window-title placement memory.
+>
+> Design: [`docs/MUR_DESIGN.md`](docs/MUR_DESIGN.md). The migration is staged
+> in phases — early phases keep AeroSpace's tree alongside the new grid
+> behind a feature flag.
 
 <img src="./resources/Assets.xcassets/AppIcon.appiconset/icon.png" width="40%" align="right">
 
-AeroSpace is an i3-like tiling window manager for macOS
+## Key differences from AeroSpace
 
-Videos:
-- [YouTube 91 sec Demo](https://www.youtube.com/watch?v=UOl7ErqWbrk)
-- [YouTube Guide by Josean Martinez](https://www.youtube.com/watch?v=-FoWClVHG5g)
+- **No layout trees.** A workspace has one active grid (default 3×3). No
+  recursive splits, no orientation flips, no `accordion` vs `tiles`.
+- **Tile spans, not pixel splits.** A window occupies a contiguous rectangle
+  of cells. The grid is structural; you change geometry by switching
+  layouts, not by dragging gutters.
+- **Stacking is first-class.** Multiple windows can share overlapping spans;
+  z-order is explicit and updates on focus.
+- **Empty rows/columns collapse.** If a row or column has no windows, it
+  contributes 0 — the others grow to fill.
+- **Sticky placement memory.** A known window (by app id + title) reopens
+  in its last-known span. New windows go to the nearest empty column, or
+  overlap the middle column if none is free.
+- **Floating still works,** unchanged.
 
-Docs:
-- [AeroSpace Guide](https://nikitabobko.github.io/AeroSpace/guide)
-- [AeroSpace Commands](https://nikitabobko.github.io/AeroSpace/commands)
-- [AeroSpace Goodies](https://nikitabobko.github.io/AeroSpace/goodies)
+## Inherited from AeroSpace
 
-## Key features
-
-- Tiling window manager based on a [tree paradigm](https://nikitabobko.github.io/AeroSpace/guide#tree)
-- [i3](https://i3wm.org/) inspired
-- Fast workspaces switching without animations and without the necessity to disable SIP
-- AeroSpace employs its [own emulation of virtual workspaces](https://nikitabobko.github.io/AeroSpace/guide#emulation-of-virtual-workspaces) instead of relying on native macOS Spaces due to [their considerable limitations](https://nikitabobko.github.io/AeroSpace/guide#emulation-of-virtual-workspaces)
-- Plain text configuration (dotfiles friendly). See: [default-config.toml](https://nikitabobko.github.io/AeroSpace/guide#default-config)
-- CLI first (manpages and shell completion included)
-- Doesn't require disabling SIP (System Integrity Protection)
-- [Proper multi-monitor support](https://nikitabobko.github.io/AeroSpace/guide#multiple-monitors) (i3-like paradigm)
+- Fast workspace switching, SIP-free.
+- Own emulation of virtual workspaces (not macOS Spaces).
+- Plain-text TOML config, CLI-first daemon.
+- Multi-monitor support.
 
 ## Installation
 

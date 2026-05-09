@@ -3,7 +3,11 @@ import Common
 import Foundation
 import os
 
-let signposter = OSSignposter(subsystem: aeroSpaceAppId, category: .pointsOfInterest)
+// `nonisolated(unsafe)` works around macOS 14 SDK lacking Sendable on
+// OSSignposter. signposters are inherently thread-safe (designed for
+// concurrent logging from any thread). Drop this annotation once the
+// minimum SDK is macOS 15.
+nonisolated(unsafe) let signposter = OSSignposter(subsystem: aeroSpaceAppId, category: .pointsOfInterest)
 
 let myPid = NSRunningApplication.current.processIdentifier
 let lockScreenAppBundleId = "com.apple.loginwindow"

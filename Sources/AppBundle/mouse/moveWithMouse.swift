@@ -26,6 +26,17 @@ func movedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableR
 @MainActor
 private func moveWithMouse(_ window: Window) async throws { // todo cover with tests
     resetClosedWindowsCache()
+    // mur — grid-aware drag. If the experimental grid is on AND this
+    // window is registered in some workspace's gridLayout, run the grid
+    // hover/snap path INSTEAD of the AeroSpace tree swap. The HUD shows
+    // a hover preview; the global mouse-up handler does the actual snap.
+    if config.experimentalGridLayout,
+       let workspace = window.nodeWorkspace,
+       workspace.gridLayout.placements[window.windowId] != nil
+    {
+        moveGridWindow(window, workspace: workspace)
+        return
+    }
     guard let parent = window.parent else { return }
     switch parent.cases {
         case .workspace:
@@ -36,6 +47,29 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
              .macosPopupWindowsContainer, .macosHiddenAppsWindowsContainer:
             return // Unconventional windows can't be moved with mouse
     }
+}
+
+@MainActor
+private func moveGridWindow(_ window: Window, workspace: Workspace) {
+    currentlyManipulatedWithMouseWindowId = window.windowId
+    window.lastAppliedLayoutPhysicalRect = nil
+    let layout = workspace.gridLayout
+    guard let source = layout.placements[window.windowId] else { return }
+    let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+    let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
+    let slotGap = CGFloat(resolved.inner.get(
+        layout.shape.orientation == .landscape ? .v : .h,
+    ))
+    let hoverCell = layout.cellAt(point: mouseLocation, in: available, innerGap: slotGap)
+    gridDragSession = GridDragSession(
+        windowId: window.windowId,
+        workspace: workspace,
+        sourceSpan: source,
+        hoverCell: hoverCell,
+    )
+    GridHud.shared.update(layout: layout, span: source, hoverSpan: hoverCell.map {
+        TileSpan(lane0: $0.lane, lane1: $0.lane, slot0: $0.slot, slot1: $0.slot)
+    })
 }
 
 @MainActor

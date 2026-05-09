@@ -47,6 +47,50 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
         case .tilingContainer:
             guard let rect = try await window.getAxRect() else { return }
             guard let lastAppliedLayoutRect = window.lastAppliedLayoutPhysicalRect else { return }
+
+            // mur — phase 1.5 grid resize path. When the experimental
+            // grid is on AND this window is registered in the workspace's
+            // gridLayout, redistribute slot weights via GridResize.snap
+            // instead of mutating the tree's adaptive weights.
+            if config.experimentalGridLayout,
+               let workspace = window.nodeWorkspace,
+               workspace.gridLayout.placements[window.windowId] != nil
+            {
+                let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+                let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
+                let slotGap = CGFloat(resolved.inner.get(
+                    workspace.gridLayout.shape.orientation == .landscape ? .v : .h,
+                ))
+                let sample = GridResize.DragSample(
+                    layout: workspace.gridLayout,
+                    windowId: window.windowId,
+                    lastAppliedRect: lastAppliedLayoutRect,
+                    currentRect: rect,
+                    available: available,
+                    innerGap: slotGap,
+                )
+                if let result = GridResize.snap(sample) {
+                    if let lane = result.slotLane, let w = result.slotWeights {
+                        workspace.gridLayout.setSlotWeights(lane: lane, weights: w)
+                    }
+                    if let lw = result.laneWeights {
+                        workspace.gridLayout.setLaneWeights(lw)
+                    }
+                    // mur — advance the baseline to the currently sampled
+                    // rect. The layout pass SKIPS the dragged window
+                    // (`currentlyManipulatedWithMouseWindowId`), so it
+                    // never updates `lastAppliedLayoutPhysicalRect` for
+                    // it. Without this, each AX event recomputes its
+                    // delta from the pre-drag rect — consecutive events
+                    // would re-apply *cumulative* weight mutations,
+                    // producing the "exponential" feedback the user
+                    // observed (linear cursor → quadratic redistribution).
+                    window.lastAppliedLayoutPhysicalRect = rect
+                }
+                currentlyManipulatedWithMouseWindowId = window.windowId
+                return
+            }
+
             let (lParent, lOwnIndex) = window.closestParent(hasChildrenInDirection: .left, withLayout: .tiles) ?? (nil, nil)
             let (dParent, dOwnIndex) = window.closestParent(hasChildrenInDirection: .down, withLayout: .tiles) ?? (nil, nil)
             let (uParent, uOwnIndex) = window.closestParent(hasChildrenInDirection: .up, withLayout: .tiles) ?? (nil, nil)

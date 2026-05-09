@@ -125,6 +125,9 @@ private let configParser: [String: any ParserProtocol<Config>] = [
     "workspace-to-monitor-force-assignment": Parser(\.workspaceToMonitorForceAssignment, parseWorkspaceToMonitorAssignment),
     "on-window-detected": Parser(\.onWindowDetected, parseOnWindowDetectedArray),
 
+    // mur — phase 1 feature flag (see docs/MUR_DESIGN.md)
+    "experimental-grid-layout": Parser(\.experimentalGridLayout, parseBool),
+
     // Deprecated
     "non-empty-workspaces-root-containers-layout-on-startup": Parser(\._nonEmptyWorkspacesRootContainersLayoutOnStartup, parseStartupRootContainerLayout),
     "indent-for-nested-containers-with-the-same-orientation": Parser(\._indentForNestedContainersWithTheSameOrientation, parseIndentForNestedContainersWithTheSameOrientation),

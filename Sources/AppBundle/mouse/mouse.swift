@@ -8,7 +8,15 @@ func isManipulatedWithMouse(_ window: Window) async throws -> Bool {
     try await (!window.isHiddenInCorner && // Don't allow to resize/move windows of hidden workspaces
         isLeftMouseButtonDown &&
         (currentlyManipulatedWithMouseWindowId == nil || window.windowId == currentlyManipulatedWithMouseWindowId))
-        .andAsync { @Sendable @MainActor in try await getNativeFocusedWindow() == window }
+        .andAsync { @Sendable @MainActor in
+            // mur — treat focus-query timeout as "not the focused window".
+            // A slow AX should not raise here either.
+            do {
+                return try await getNativeFocusedWindow() == window
+            } catch is FocusedWindowTimeoutError {
+                return false
+            }
+        }
 }
 
 /// Same motivation as in monitorFrameNormalized

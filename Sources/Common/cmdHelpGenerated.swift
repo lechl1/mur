@@ -56,6 +56,28 @@ let fullscreen_help_generated = """
        OR: fullscreen [-h|--help] on  [--window-id <window-id>] [--no-outer-gaps] [--fail-if-noop]
        OR: fullscreen [-h|--help] off [--window-id <window-id>] [--fail-if-noop]
     """
+// mur — phase 2. Manually written; no .adoc generator entry yet.
+let grid_float_help_generated = """
+    USAGE: grid-float [-h|--help] [--window-id <window-id>] [--workspace <workspace>]
+    """
+let grid_focus_help_generated = """
+    USAGE: grid-focus [-h|--help] [--workspace <workspace>] <lane> <slot>
+    """
+let grid_focus_dir_help_generated = """
+    USAGE: grid-focus-dir [-h|--help] [--workspace <workspace>] (left|down|up|right)
+    """
+let grid_info_help_generated = """
+    USAGE: grid-info [-h|--help] [--workspace <workspace>]
+    """
+let grid_move_help_generated = """
+    USAGE: grid-move [-h|--help] [--window-id <window-id>] (left|down|up|right)
+    """
+let grid_place_help_generated = """
+    USAGE: grid-place [-h|--help] [--window-id <window-id>] [--workspace <workspace>] <lane> <slot0> <slot1>
+    """
+let grid_swap_help_generated = """
+    USAGE: grid-swap [-h|--help] [--window-id <window-id>] (left|down|up|right)
+    """
 let join_with_help_generated = """
     USAGE: join-with [-h|--help] [--window-id <window-id>] (left|down|up|right)
     """

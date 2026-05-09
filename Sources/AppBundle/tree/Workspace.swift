@@ -36,6 +36,24 @@ final class Workspace: TreeNode, NonLeafTreeNodeObject, Hashable, Comparable {
     /// `assignedMonitorPoint` must be interpreted only when the workspace is invisible
     fileprivate var assignedMonitorPoint: CGPoint? = nil
 
+    /// mur — phase 1.2. Lazy-initialised grid layout for this workspace.
+    /// Used only when `config.experimentalGridLayout == true`; the existing
+    /// tree (`rootTilingContainer`) is unaffected when the flag is off.
+    /// Orientation is derived from the workspace's monitor at first access;
+    /// reshape on monitor change is wired up in phase 1.3.
+    @MainActor
+    private var _gridLayout: GridLayout? = nil
+
+    @MainActor
+    var gridLayout: GridLayout {
+        if let existing = _gridLayout { return existing }
+        let mon = workspaceMonitor.visibleRectPaddedByOuterGaps
+        let orientation = LayoutOrientation.forMonitor(width: mon.width, height: mon.height)
+        let layout = GridLayout(shape: LayoutShape(orientation: orientation, lanes: 6))
+        _gridLayout = layout
+        return layout
+    }
+
     @MainActor
     private init(_ name: String) {
         self.name = name

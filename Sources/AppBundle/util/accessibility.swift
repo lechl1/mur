@@ -6,7 +6,21 @@ import PrivateApi
 func checkAccessibilityPermissions() {
     let options = [axTrustedCheckOptionPrompt: true]
     if !AXIsProcessTrustedWithOptions(options as CFDictionary) {
-        resetAccessibility() // Because macOS doesn't reset it for us when the app signature changes...
+        // mur — patch for the dogfood loop. Each ad-hoc-signed debug build
+        // gets a fresh identity hash, so previously-granted Accessibility
+        // is revoked on every rebuild. Upstream's behavior (resetAccess +
+        // terminateApp) makes the dev loop unworkable: re-grant in System
+        // Settings on every iteration. In DEBUG: log loudly, leave the
+        // tccutil entry alone, and keep the daemon alive so CLI/data-model
+        // work continues. AX-dependent operations (window moves) will
+        // silently no-op until the user re-grants. RELEASE keeps the
+        // original strict behavior.
+        if isDebug {
+            print("⚠️  mur DEBUG: Accessibility not granted — daemon staying up but window moves are no-ops.")
+            print("    Grant via System Settings → Privacy & Security → Accessibility → MurApp.")
+            return
+        }
+        resetAccessibility()
         terminateApp()
     }
 }

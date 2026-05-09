@@ -48,11 +48,20 @@ final class MacApp: AbstractApp {
         // AX requests crash if you send them to yourself
         if pid == myPid { return nil }
 
+        // mur — bound `wip.await()` so a wedged AX-subscription thread
+        // (some apps refuse to respond to AXObserverAddNotification for
+        // 10+ seconds) doesn't deadlock the entire daemon. If the wait
+        // times out we return nil; the background thread keeps running
+        // and may populate `allAppsMap[pid]` later, in which case the
+        // next getOrRegister call returns the cached entry immediately.
+        let wipTimeoutNs: UInt64 = 1_500_000_000 // 1.5s
+
         while true {
             if let existing = allAppsMap[pid] { return existing }
             try checkCancellation()
             if let wip = wipPids[pid] {
-                try await wip.await()
+                let signaled = await Self.awaitOrTimeout(wip, nanoseconds: wipTimeoutNs)
+                if !signaled { return nil }
                 continue
             }
             let wip = AwaitableOneTimeBroadcastLatch()
@@ -80,6 +89,33 @@ final class MacApp: AbstractApp {
             }
             thread.name = "AxAppThread \(nsApp.idForDebug)"
             thread.start()
+        }
+    }
+
+    /// Race `wip.await()` against a sleep. Returns `true` if the latch
+    /// signaled before the deadline, `false` on timeout (or cancel).
+    /// Used by `getOrRegister` so a wedged AX-subscription thread never
+    /// deadlocks the main actor.
+    private static func awaitOrTimeout(
+        _ wip: AwaitableOneTimeBroadcastLatch,
+        nanoseconds: UInt64,
+    ) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                do {
+                    try await wip.await()
+                    return true
+                } catch {
+                    return false
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
         }
     }
 
@@ -272,26 +308,54 @@ final class MacApp: AbstractApp {
             return []
         }
         guard let thread else { return [] }
-        let (alive, dead) = try await thread.runInLoop { [nsApp, windows, axApp] (job) -> ([UInt32], [UInt32]) in
-            var alive: [UInt32: AxWindow] = windows.threadGuarded
-            var dead = [UInt32: AxWindow]()
-            // Second line of defence against lock screen. See the first line of defence: closedWindowsCache
-            // Second and third lines of defence are technically needed only to avoid potential flickering
-            if frontmostAppBundleId != lockScreenAppBundleId {
-                (alive, dead) = try alive.partition {
-                    try job.checkCancellation()
-                    return $0.value.ax.containingWindowId() != nil
+        // mur — bound this AX-thread hop with a deadline so a slow
+        // app's AX thread can't hang the heavy-refresh TaskGroup. The
+        // task group waits for ALL apps to report; one wedged app
+        // would block window registration for every other app, leaving
+        // the daemon up but the grid empty.
+        //
+        // On timeout we return empty arrays for this app — its windows
+        // re-register on the next refresh. The Task running on the AX
+        // thread continues to completion in the background.
+        let timeoutNs: UInt64 = 1_500_000_000
+        let runLoopJob = RunLoopJob()
+        let guardBox = ResumeOnceGuard()
+        let result: ([UInt32], [UInt32])? = await withCheckedContinuation { (cont: CheckedContinuation<([UInt32], [UInt32])?, Never>) in
+            thread.runInLoopAsync(job: runLoopJob, autoCheckCancelled: false) { [nsApp, windows, axApp] (job) in
+                if job.isCancelled {
+                    if guardBox.tryClaim() { cont.resume(returning: nil) }
+                    return
+                }
+                do {
+                    var alive: [UInt32: AxWindow] = windows.threadGuarded
+                    var dead = [UInt32: AxWindow]()
+                    if frontmostAppBundleId != lockScreenAppBundleId {
+                        (alive, dead) = try alive.partition {
+                            try job.checkCancellation()
+                            return $0.value.ax.containingWindowId() != nil
+                        }
+                    }
+                    for (id, window) in axApp.threadGuarded.get(Ax.windowsAttr) ?? [] {
+                        try job.checkCancellation()
+                        try alive.getOrRegisterAxWindow(windowId: id, window, nsApp, job)
+                    }
+                    windows.threadGuarded = alive
+                    if guardBox.tryClaim() {
+                        cont.resume(returning: (Array(alive.keys), Array(dead.keys)))
+                    }
+                } catch {
+                    if guardBox.tryClaim() { cont.resume(returning: nil) }
                 }
             }
-
-            for (id, window) in axApp.threadGuarded.get(Ax.windowsAttr) ?? [] {
-                try job.checkCancellation()
-                try alive.getOrRegisterAxWindow(windowId: id, window, nsApp, job)
+            let delaySec = Double(timeoutNs) / 1_000_000_000
+            DispatchQueue.global().asyncAfter(deadline: .now() + delaySec) {
+                if guardBox.tryClaim() {
+                    runLoopJob.cancel()
+                    cont.resume(returning: nil)
+                }
             }
-
-            windows.threadGuarded = alive
-            return (Array(alive.keys), Array(dead.keys))
         }
+        guard let (alive, dead) = result else { return [] }
         windowsCount = alive.count
         for windowId in dead {
             setFrameJobs.removeValue(forKey: windowId)?.cancel()
