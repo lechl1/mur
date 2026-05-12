@@ -34,6 +34,19 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
        let workspace = window.nodeWorkspace,
        workspace.stackingLayout.placements[window.windowId] != nil
     {
+        // mur — dragging the LEFT or TOP edge fires kAXMovedNotification
+        // too (position changes alongside size). If the size has changed
+        // vs the last applied rect, this is a resize drag — bail out and
+        // let `resizedObs` handle it. Otherwise we'd null
+        // `lastAppliedLayoutPhysicalRect` here and starve the resize path,
+        // and the mouse-up handler would commit a stray grid `place()`.
+        if let lastRect = window.lastAppliedLayoutPhysicalRect,
+           let currentRect = try await window.getAxRect(),
+           abs(currentRect.width - lastRect.width) > 1 ||
+           abs(currentRect.height - lastRect.height) > 1
+        {
+            return
+        }
         moveStackingWindow(window, workspace: workspace)
         return
     }

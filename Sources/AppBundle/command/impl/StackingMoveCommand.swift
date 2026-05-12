@@ -2,6 +2,57 @@ import AppKit
 import Common
 import Foundation
 
+/// `stacking-move` fallback when the focused window has no in-workspace
+/// target in the requested direction (alone at a lane edge, or no
+/// slot-mate at a slot edge). Direction-based, not orientation-based:
+///   - up/down  → move the window to the prev/next workspace on the
+///                same monitor and follow focus. Always wraps within
+///                the monitor's workspace list.
+///   - left/right → move the window to the active workspace of the
+///                  monitor in that direction. If there's no monitor
+///                  there, return false so the caller can fall back to
+///                  the existing edge-shrink behaviour.
+/// Returns true if the window was relocated, false if the caller should
+/// run its in-workspace fallback (the shrink).
+@MainActor
+private func crossWorkspaceOrMonitorFallback(
+    direction: CardinalDirection,
+    window: Window,
+    sourceWorkspace: Workspace,
+    target: LiveFocus,
+    io: CmdIo,
+) -> Bool {
+    let dest: Workspace?
+    switch direction {
+        case .up, .down:
+            dest = getNextPrevWorkspace(
+                current: sourceWorkspace,
+                isNext: direction == .down,
+                wrapAround: true,
+                stdin: nil,
+                target: target,
+            )
+        case .left, .right:
+            switch MonitorTarget.direction(direction).resolve(
+                sourceWorkspace.workspaceMonitor, wrapAround: false,
+            ) {
+                case .success(let monitor): dest = monitor.activeWorkspace
+                case .failure:               dest = nil
+            }
+    }
+    guard let dest, dest != sourceWorkspace else { return false }
+    _ = sourceWorkspace.stackingLayout.remove(window.windowId)
+    _ = moveWindowToWorkspace(
+        window, dest, io,
+        focusFollowsWindow: true, failIfNoop: false,
+    )
+    tryRegisterInStackingLayout(window)
+    if let newSpan = dest.stackingLayout.placements[window.windowId] {
+        StackingHud.shared.update(layout: dest.stackingLayout, span: newSpan)
+    }
+    return true
+}
+
 /// Per-window alternation state for `stacking-move` on the lane axis.
 /// Same window + same direction → toggle between OVERLAP (merge into
 /// neighbour as a new row) and ADD-NEW-TILE (insert a new column
@@ -156,8 +207,18 @@ struct StackingMoveCommand: Command {
                     ))
                 }
             } else {
-                // Outward press at edge, alone → shrink.
-                StackingResize.resizeLane(layout: layout, lane: myLane, signum: -1)
+                // Outward press at edge, alone → no in-workspace target.
+                // up/down → next/prev workspace; left/right → next monitor
+                // in that direction; otherwise fall back to shrink.
+                if !crossWorkspaceOrMonitorFallback(
+                    direction: args.direction.val,
+                    window: window,
+                    sourceWorkspace: workspace,
+                    target: target,
+                    io: io,
+                ) {
+                    StackingResize.resizeLane(layout: layout, lane: myLane, signum: -1)
+                }
             }
         } else {
             // Slot axis (top/bottom in landscape, left/right in portrait).
@@ -215,7 +276,19 @@ struct StackingMoveCommand: Command {
                     ))
                 }
             } else {
-                StackingResize.resizeSlot(layout: layout, lane: myLane, slot: mySlot, signum: -1)
+                // Edge of lane, no slot-mate, no neighbour slot → no
+                // in-workspace target. up/down → next/prev workspace;
+                // left/right → next monitor in that direction; otherwise
+                // fall back to shrink.
+                if !crossWorkspaceOrMonitorFallback(
+                    direction: args.direction.val,
+                    window: window,
+                    sourceWorkspace: workspace,
+                    target: target,
+                    io: io,
+                ) {
+                    StackingResize.resizeSlot(layout: layout, lane: myLane, slot: mySlot, signum: -1)
+                }
             }
         }
 
