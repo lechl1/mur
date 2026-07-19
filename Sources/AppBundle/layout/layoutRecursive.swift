@@ -51,9 +51,10 @@ extension Workspace {
         // mur — forced-resize pre-pass. Grow the lane / slot to fit
         // the cached observed minimum so the upcoming setAxFrame
         // produces the correct rect first time.
-        //   - Lane-axis grow is gated to single-window-per-tile, since
-        //     widening a lane that's shared with other tiles would
-        //     disrupt the lane-mates' widths uselessly.
+        //   - Lane-axis grow runs for EVERY window (grow-only): a shared
+        //     column grows to its widest window's min width, so every
+        //     window in the column fills that width instead of leaving a
+        //     window that can't shrink wider than its column-mates.
         //   - Slot-axis grow runs regardless of lane occupancy: when a
         //     window moves up/down in landscape (or left/right in
         //     portrait) within a column with neighbors, the focused
@@ -73,9 +74,12 @@ extension Workspace {
             let usableSlotPx = (isLandscape ? rect.height : rect.width) - totalSlotGap
             let minLanePx = isLandscape ? minSize.width : minSize.height
             let minSlotPx = isLandscape ? minSize.height : minSize.width
-            if stackingLayout.windows(in: span.lane0).count == 1 {
-                _ = stackingLayout.growLaneToFit(requiredPx: minLanePx, lane: span.lane0, totalUsablePx: usableLanePx)
-            }
+            // Grow the column to fit this window's min width. `growLaneToFit`
+            // is grow-only, so across all windows in a shared column the lane
+            // ends up at the WIDEST window's min — every window in the column
+            // then fills that width (a window that can't shrink no longer
+            // leaves its column-mates narrower than itself).
+            _ = stackingLayout.growLaneToFit(requiredPx: minLanePx, lane: span.lane0, totalUsablePx: usableLanePx)
             _ = stackingLayout.growSlotToFit(requiredPx: minSlotPx, lane: span.lane0, slot: span.slot0, totalUsablePx: usableSlotPx)
         }
 
@@ -130,9 +134,8 @@ extension Workspace {
             // mur — debounced fit-check. Records the observed min size
             // + grows the lane / slot if it overflowed. The pre-pass
             // on the next layout uses the cached size for an instant
-            // correct fit. Slot-axis grow runs regardless of lane
-            // occupancy; lane-axis grow is gated to single-window
-            // tiles inside the check itself.
+            // correct fit. Both axes grow for every window (grow-only),
+            // so a shared column settles at its widest window's min width.
             if stackingLayout.placements[windowId] != nil {
                 scheduleStackingFitCheck(window: window, requested: r, workspace: self, slotGap: slotGap)
             }
@@ -197,8 +200,9 @@ extension TreeNode {
 /// and grows the lane / slot via `growLaneToFit` / `growSlotToFit`
 /// if either dimension is over by more than 20px.
 ///
-/// Lane-axis grow is gated to single-window tiles (otherwise it would
-/// fight the lane-mates). Slot-axis grow runs regardless of lane
+/// Lane-axis grow (grow-only) runs for every window, so a shared column
+/// grows to its widest window's min width and every window in it fills
+/// that width. Slot-axis grow runs regardless of lane
 /// occupancy: when a window moves up/down in a populated column
 /// (landscape) or left/right in a populated row (portrait), the
 /// focused slot grows to its observed min and the neighbour slots
@@ -234,9 +238,11 @@ fileprivate func scheduleStackingFitCheck(window: Window, requested r: Rect, wor
         let slotOver = isLandscape ? heightOver : widthOver
         let requiredLanePx = isLandscape ? actual.width : actual.height
         let requiredSlotPx = isLandscape ? actual.height : actual.width
-        let isSoloInLane = layout.windows(in: span.lane0).count == 1
         var changed = false
-        if laneOver > 20 && isSoloInLane {
+        if laneOver > 20 {
+            // Grow the whole column to fit this window's min width (grow-only,
+            // so the column settles at its widest window's min and every
+            // window in it fills that width).
             changed = layout.growLaneToFit(
                 requiredPx: requiredLanePx, lane: span.lane0,
                 totalUsablePx: usableLanePx,
