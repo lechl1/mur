@@ -14,11 +14,20 @@ struct StackingFocusDirCommand: Command {
             return .fail
         }
         guard let target = args.resolveTargetOrReportError(env, io) else { return .fail }
+        let workspace = target.workspace
+        // Empty workspace / nothing focused → cross the edge and focus a
+        // window in the next/previous workspace (or adjacent monitor),
+        // switching to that workspace. No source window to align to.
         guard let window = target.windowOrNil else {
-            io.err("stacking-focus-dir needs a focused window")
+            if let code = crossEdgeFocus(
+                direction: args.direction.val, sourceWindow: nil,
+                sourceWorkspace: workspace, target: target,
+            ) {
+                return code
+            }
+            io.err("stacking-focus-dir: nothing to focus here or in the \(args.direction.val.rawValue) workspace/monitor")
             return .fail
         }
-        let workspace = target.workspace
         let layout = workspace.stackingLayout
         guard let current = layout.placements[window.windowId] else {
             io.err("focused window \(window.windowId) is not in the grid")
@@ -140,7 +149,7 @@ struct StackingFocusDirCommand: Command {
 @MainActor
 private func crossEdgeFocus(
     direction: CardinalDirection,
-    sourceWindow: Window,
+    sourceWindow: Window?,
     sourceWorkspace: Workspace,
     target: LiveFocus,
 ) -> BinaryExitCode? {
@@ -207,11 +216,14 @@ private func slotGap(of workspace: Workspace) -> CGFloat {
 /// the edge opposite `direction`. Primary key: alignment with the source
 /// window along the perpendicular axis (proportional, so it works across
 /// monitors of different sizes). Tie-break: proximity to the entry edge.
+/// With no `sourceWindow` (crossing from an empty workspace) the source is
+/// taken as the workspace centre, so it lands on the entry-edge window
+/// nearest the middle.
 @MainActor
 private func entryWindow(
     in dest: Workspace,
     movingIn direction: CardinalDirection,
-    sourceWindow: Window,
+    sourceWindow: Window?,
     sourceWorkspace: Workspace,
 ) -> WindowId? {
     let layout = dest.stackingLayout
@@ -220,11 +232,12 @@ private func entryWindow(
     let srcAvail = sourceWorkspace.workspaceMonitor.visibleRectPaddedByOuterGaps
     let destGap = slotGap(of: dest)
 
-    // Source window's screen rect (in the source workspace).
-    let srcRect = sourceWindow.lastAppliedLayoutPhysicalRect
-        ?? sourceWorkspace.stackingLayout.resolveRect(
-            for: sourceWindow.windowId, in: srcAvail, innerGap: slotGap(of: sourceWorkspace),
-        )
+    // Source window's screen rect (in the source workspace), or the source
+    // workspace centre when crossing from an empty workspace.
+    let srcRect = sourceWindow.flatMap {
+        $0.lastAppliedLayoutPhysicalRect
+            ?? sourceWorkspace.stackingLayout.resolveRect(for: $0.windowId, in: srcAvail, innerGap: slotGap(of: sourceWorkspace))
+    }
     let srcCenter = srcRect?.center ?? srcAvail.center
 
     let vertical = direction == .up || direction == .down
