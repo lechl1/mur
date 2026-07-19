@@ -83,7 +83,6 @@ enum StackingResize {
         let laneLow: Bool, laneHigh: Bool
         let slotAxisExtent: CGFloat, laneAxisExtent: CGFloat
         let slotLowDelta: CGFloat, slotHighDelta: CGFloat
-        let laneLowDelta: CGFloat, laneHighDelta: CGFloat
         switch orientation {
             case .landscape:
                 slotLow  = edges.contains(.top)
@@ -94,8 +93,6 @@ enum StackingResize {
                 laneAxisExtent = sample.available.width
                 slotLowDelta  = sample.lastAppliedRect.minY - sample.currentRect.minY
                 slotHighDelta = sample.currentRect.maxY - sample.lastAppliedRect.maxY
-                laneLowDelta  = sample.lastAppliedRect.minX - sample.currentRect.minX
-                laneHighDelta = sample.currentRect.maxX - sample.lastAppliedRect.maxX
             case .portrait:
                 slotLow  = edges.contains(.left)
                 slotHigh = edges.contains(.right)
@@ -105,8 +102,6 @@ enum StackingResize {
                 laneAxisExtent = sample.available.height
                 slotLowDelta  = sample.lastAppliedRect.minX - sample.currentRect.minX
                 slotHighDelta = sample.currentRect.maxX - sample.lastAppliedRect.maxX
-                laneLowDelta  = sample.lastAppliedRect.minY - sample.currentRect.minY
-                laneHighDelta = sample.currentRect.maxY - sample.lastAppliedRect.maxY
         }
 
         // -- slot-axis transfer (within current lane) ---------------
@@ -138,49 +133,34 @@ enum StackingResize {
             }
         }
 
-        // -- lane-axis transfer (across used lanes) ------------------
-        // AeroSpace-style: dragging the high edge of a window grows the
-        // dragged lane (or `lane1` for multi-lane spans) and shrinks
-        // **every** USED lane on the high side, EQUALLY. Mirror for the
-        // low edge. With 3 used lanes, dragging col 0's right edge by
-        // 100 px grows col 0 by 100 and shrinks col 1 and col 2 by 50
-        // each — instead of dumping the whole 100 onto col 1.
+        // -- lane-axis resize → resize-towards-center ---------------
+        // Set the dragged column's ABSOLUTE width from its new rendered
+        // extent. The other used columns are first snapshotted at their
+        // current rendered widths (so they don't jump), then the dragged
+        // column is overwritten. `resolveRect`'s fit-or-center re-centers
+        // the strip afterwards, so the column grows/shrinks symmetrically
+        // about the screen centre (naru's resize-towards-center) instead
+        // of pushing a single neighbour off the edge.
         var resultLaneWeights: [CGFloat]? = nil
-        if laneLow || laneHigh {
+        if (laneLow || laneHigh), sample.layout.usedLanes.contains(span.lane0) {
             let used = sample.layout.usedLanes
-            let visIdx0 = used.firstIndex(of: span.lane0)
-            let visIdx1 = used.firstIndex(of: span.lane1)
-            if visIdx0 != nil || visIdx1 != nil {
-                var weights: [CGFloat] = []
-                for l in 0..<sample.layout.shape.lanes {
-                    weights.append(sample.layout.laneWeight(lane: l))
-                }
-                // Sum across USED lanes only — that's what the visible
-                // partition uses, so deltas in pixels translate to
-                // deltas in this sum.
+            let usable = laneAxisExtent - max(0, CGFloat(used.count - 1)) * sample.innerGap
+            if usable > 0 {
+                var weights: [CGFloat] = (0..<sample.layout.shape.lanes)
+                    .map { sample.layout.laneWeight(lane: $0) }
+                // Snapshot used lanes as their current rendered fractions
+                // so non-dragged columns keep their on-screen width.
                 let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
-                let usable = laneAxisExtent - max(0, CGFloat(used.count - 1)) * sample.innerGap
-                if usedTotal > 0 && usable > 0 {
-                    if laneLow, let i0 = visIdx0, i0 > 0 {
-                        // Drag low-edge outward → grow current lane (lane0),
-                        // shrink every USED lane to its low side equally.
-                        let othersCount = i0
-                        let dTotal = (laneLowDelta / usable) * usedTotal
-                        let dPerOther = dTotal / CGFloat(othersCount)
-                        for j in 0..<i0 {
-                            transfer(&weights, from: used[j], to: span.lane0, delta: dPerOther)
-                        }
-                    }
-                    if laneHigh, let i1 = visIdx1, i1 < used.count - 1 {
-                        let othersCount = used.count - 1 - i1
-                        let dTotal = (laneHighDelta / usable) * usedTotal
-                        let dPerOther = dTotal / CGFloat(othersCount)
-                        for j in (i1 + 1)..<used.count {
-                            transfer(&weights, from: used[j], to: span.lane1, delta: dPerOther)
-                        }
-                    }
-                    resultLaneWeights = weights
-                }
+                let denom = max(1.0, usedTotal)
+                for l in used { weights[l] = weights[l] / denom }
+                // Dragged column's new absolute width, split evenly across
+                // the lanes it spans (single-lane is the common case).
+                let newExtent = orientation == .landscape
+                    ? sample.currentRect.width : sample.currentRect.height
+                let laneCount = CGFloat(span.lane1 - span.lane0 + 1)
+                let perLane = max(0.05, (newExtent / usable) / laneCount)
+                for l in span.lane0...span.lane1 { weights[l] = perLane }
+                resultLaneWeights = weights
             }
         }
 

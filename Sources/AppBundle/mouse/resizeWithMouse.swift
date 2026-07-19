@@ -9,6 +9,9 @@ func resizedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutabl
     let windowId = ax.containingWindowId()
     Task { @MainActor in
         guard let token: RunSessionGuard = .isServerEnabled else { return }
+        // mur — our own animation frames fire resize notifications; ignore
+        // them so the animator doesn't trigger a refresh storm.
+        if let windowId, WindowAnimator.shared.animatingIds.contains(windowId) { return }
         guard let windowId, let window = Window.get(byId: windowId), try await isManipulatedWithMouse(window) else {
             scheduleCancellableCompleteRefreshSession(.ax(notif))
             return
@@ -27,6 +30,7 @@ func resizedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutabl
 func resetManipulatedWithMouseIfPossible() async throws {
     if currentlyManipulatedWithMouseWindowId != nil {
         currentlyManipulatedWithMouseWindowId = nil
+        currentlyResizedWithMouseWindowId = nil
         for workspace in Workspace.all {
             workspace.resetResizeWeightBeforeResizeRecursive()
         }
@@ -47,6 +51,10 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
         case .tilingContainer:
             guard let rect = try await window.getAxRect() else { return }
             guard let lastAppliedLayoutRect = window.lastAppliedLayoutPhysicalRect else { return }
+            // mur — mark the resize in progress so the move handler won't
+            // hijack the left/top-edge `kAXMovedNotification` into a drag.
+            currentlyResizedWithMouseWindowId = window.windowId
+            WindowAnimator.shared.cancel(window.windowId)
 
             // mur — phase 1.5 grid resize path. When the experimental
             // grid is on AND this window is registered in the workspace's

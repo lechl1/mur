@@ -83,9 +83,13 @@ extension Workspace {
             guard let window = Window.get(byId: windowId) else { continue }
             if window.windowId == currentlyManipulatedWithMouseWindowId { continue }
             guard let r = stackingLayout.resolveRect(for: windowId, in: rect, innerGap: slotGap) else { continue }
-            window.lastAppliedLayoutPhysicalRect = r
+            // mur — spring-animate toward the target rect (naru feel). The
+            // animator drives per-frame setAxFrames itself and suppresses the
+            // resulting AX-notification refreshes via `animatingIds`.
+            let previous = window.lastAppliedLayoutPhysicalRect
             window.lastAppliedLayoutVirtualRect = r
-            window.setAxFrame(r.topLeftCorner, r.size)
+            WindowAnimator.shared.animate(window, from: previous, to: r)
+            window.lastAppliedLayoutPhysicalRect = r
 
             // mur — auto-float non-resizable windows. Once per window:
             // wait briefly for the resize to settle, then compare the
@@ -99,6 +103,9 @@ extension Workspace {
                 let workspace = self
                 Task { @MainActor in
                     try? await Task.sleep(nanoseconds: 150_000_000)
+                    // Skip while the animator is still driving this window —
+                    // its live rect is mid-flight, not the applied target.
+                    if WindowAnimator.shared.animatingIds.contains(windowId) { return }
                     guard let actual = try? await window.getAxRect() else { return }
                     let widthDiff = abs(actual.width - r.width)
                     let heightDiff = abs(actual.height - r.height)
@@ -203,6 +210,8 @@ fileprivate func scheduleStackingFitCheck(window: Window, requested r: Rect, wor
     gridFitCheckTasks[windowId] = Task { @MainActor in
         try? await Task.sleep(nanoseconds: 20_000_000)
         if Task.isCancelled { return }
+        // Skip while the animator is still driving this window.
+        if WindowAnimator.shared.animatingIds.contains(windowId) { return }
         guard let actual = try? await window.getAxRect() else { return }
         let widthOver = actual.width - r.width
         let heightOver = actual.height - r.height

@@ -15,6 +15,35 @@ import Common
 /// still go through the regular auto-float dance once.
 @MainActor var knownNonResizableAppIds: Set<String> = []
 
+/// Hardcoded list of bundle IDs mur recognizes as terminal emulators.
+/// A freshly-opened window of one of these apps gets its own column
+/// sized to a fixed fraction of the workspace width — see
+/// `terminalLaneFraction(for:)` and the terminal branch in
+/// `tryRegisterInStackingLayout`.
+@MainActor let recognizedTerminalBundleIds: Set<String> = [
+    "com.apple.Terminal",        // Terminal.app
+    "com.googlecode.iterm2",     // iTerm2
+    "com.mitchellh.ghostty",     // Ghostty
+    "net.kovidgoyal.kitty",      // kitty
+    "org.alacritty",             // Alacritty
+    "io.alacritty",              // Alacritty (older builds)
+    "com.github.wez.wezterm",    // WezTerm
+    "dev.warp.Warp-Stable",      // Warp
+    "co.zeit.hyper",             // Hyper
+    "com.raphaelamorim.rio",     // Rio
+]
+
+/// Fraction of the lane axis a freshly-opened terminal column occupies:
+/// 1/5 on ultrawide monitors (aspect ≥ 2:1), 1/3 otherwise. Because the
+/// layout is columnar this is the column WIDTH in landscape and the row
+/// HEIGHT in portrait (the axes invert with orientation).
+@MainActor
+func terminalLaneFraction(for monitor: Monitor) -> CGFloat {
+    let r = monitor.visibleRectPaddedByOuterGaps
+    let aspect = r.height > 0 ? r.width / r.height : 1
+    return aspect >= 2.0 ? 1.0 / 5.0 : 1.0 / 3.0
+}
+
 /// mur — phase 1.4 entry point.
 ///
 /// Called from `MacWindow.getOrRegister` after the window has been bound
@@ -70,6 +99,29 @@ func tryRegisterInStackingLayout(_ window: Window) {
     // in-grid flash and a wasted setAxFrame round-trip.
     if !appId.isEmpty && knownNonResizableAppIds.contains(appId) { return }
     let shape = workspace.stackingLayout.shape
+
+    // mur — recognized terminals open in their OWN column at a fixed
+    // width fraction (1/3, or 1/5 on ultrawide), independent of the
+    // generic placement heuristic and window memory. Applied fresh on
+    // every open, so window memory is intentionally bypassed here.
+    if !appId.isEmpty && recognizedTerminalBundleIds.contains(appId) {
+        let layout = workspace.stackingLayout
+        let used = layout.usedLanes
+        let lane: Int
+        if used.isEmpty {
+            lane = 0
+        } else {
+            let next = (used.last ?? -1) + 1
+            lane = next < layout.shape.lanes ? next : layout.appendLane()
+        }
+        layout.place(window.windowId, at: .soleSlot(lane: lane))
+        if let placed = layout.placements[window.windowId] {
+            // Absolute width so a lone terminal renders centered at 1/3
+            // (fit-or-center), matching naru's carousel-disabled feel.
+            layout.setLaneAbsoluteWidth(terminalLaneFraction(for: workspace.workspaceMonitor), lane: placed.lane0)
+        }
+        return
+    }
 
     let span: TileSpan
     if let recalled = windowMemory.recall(appId: appId, title: "", shape: shape) {

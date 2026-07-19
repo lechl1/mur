@@ -9,6 +9,8 @@ func movedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableR
     let notif = notif as String
     Task { @MainActor in
         guard let token: RunSessionGuard = .isServerEnabled else { return }
+        // mur — ignore move notifications from our own animation frames.
+        if let windowId, WindowAnimator.shared.animatingIds.contains(windowId) { return }
         guard let windowId, let window = Window.get(byId: windowId), try await isManipulatedWithMouse(window) else {
             scheduleCancellableCompleteRefreshSession(.ax(notif))
             return
@@ -35,11 +37,16 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
        workspace.stackingLayout.placements[window.windowId] != nil
     {
         // mur — dragging the LEFT or TOP edge fires kAXMovedNotification
-        // too (position changes alongside size). If the size has changed
-        // vs the last applied rect, this is a resize drag — bail out and
-        // let `resizedObs` handle it. Otherwise we'd null
-        // `lastAppliedLayoutPhysicalRect` here and starve the resize path,
-        // and the mouse-up handler would commit a stray grid `place()`.
+        // too (position changes alongside size). If a resize gesture is
+        // already in progress for this window, never hijack it into a
+        // move / grid drag-session — that would null the resize baseline
+        // and snap the window back on mouse-up. This flag is authoritative
+        // once the first resize event has landed; the size comparison
+        // below still catches the very first event (before the flag is
+        // set), when `lastAppliedLayoutPhysicalRect` is still pristine.
+        if currentlyResizedWithMouseWindowId == window.windowId {
+            return
+        }
         if let lastRect = window.lastAppliedLayoutPhysicalRect,
            let currentRect = try await window.getAxRect(),
            abs(currentRect.width - lastRect.width) > 1 ||
@@ -65,6 +72,7 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
 @MainActor
 private func moveStackingWindow(_ window: Window, workspace: Workspace) {
     currentlyManipulatedWithMouseWindowId = window.windowId
+    WindowAnimator.shared.cancel(window.windowId)
     window.lastAppliedLayoutPhysicalRect = nil
     let layout = workspace.stackingLayout
     guard let source = layout.placements[window.windowId] else { return }

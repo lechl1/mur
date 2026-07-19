@@ -1,6 +1,17 @@
 import AppKit
 
 @MainActor var currentlyManipulatedWithMouseWindowId: UInt32? = nil
+
+/// Set to the window id once a mouse-driven RESIZE gesture has been
+/// detected (an edge is being dragged), cleared on mouse-up in
+/// `resetManipulatedWithMouseIfPossible`. Dragging the LEFT or TOP edge
+/// fires `kAXMovedNotification` alongside the resize; the move handler
+/// consults this flag to avoid hijacking the gesture into a move / grid
+/// drag-session (which would null the resize baseline and snap the
+/// window back on mouse-up). More reliable than comparing sizes, since
+/// the resize handler continuously advances `lastAppliedLayoutPhysicalRect`.
+@MainActor var currentlyResizedWithMouseWindowId: UInt32? = nil
+
 var isLeftMouseButtonDown: Bool { NSEvent.pressedMouseButtons == 1 }
 
 @MainActor

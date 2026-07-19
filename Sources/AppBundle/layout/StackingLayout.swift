@@ -92,6 +92,15 @@ typealias WindowId = UInt32
 /// Per-workspace layout. Rigid `lanes`; flexible per-lane slot counts and
 /// weights. Replaces AeroSpace's tree of `TilingContainer`s.
 final class StackingLayout {
+    /// Default absolute width of a column, as a fraction of the lane-axis
+    /// extent (see fit-or-center in `resolveRect`). Below 0.5 so that even
+    /// TWO columns don't fill the screen — they render at their natural
+    /// width and the group CENTERS with visible slack (naru carousel-
+    /// disabled feel), rather than stretching edge to edge. At 0.4: one
+    /// column → 40% centered, two → 80% centered, three → 120% shrink to
+    /// fit. Tune here to make columns wider/narrower by default.
+    static let defaultColumnWidth: CGFloat = 0.4
+
     private(set) var shape: LayoutShape
 
     /// All tiled windows and their current span.
@@ -377,9 +386,9 @@ final class StackingLayout {
         if let oldLW = _laneWeights {
             var nlw: [CGFloat] = []
             for oldL in oldUsed {
-                nlw.append(oldL < oldLW.count ? oldLW[oldL] : 1.0)
+                nlw.append(oldL < oldLW.count ? oldLW[oldL] : Self.defaultColumnWidth)
             }
-            while nlw.count < shape.lanes { nlw.append(1.0) }
+            while nlw.count < shape.lanes { nlw.append(Self.defaultColumnWidth) }
             _laneWeights = nlw
         }
         placements = newPlacements
@@ -463,7 +472,7 @@ final class StackingLayout {
         }
         slotWeights = newSlotWeights
         if var lw = _laneWeights, idx <= lw.count {
-            lw.insert(1.0, at: idx)
+            lw.insert(Self.defaultColumnWidth, at: idx)
             _laneWeights = lw
         }
         shape = LayoutShape(orientation: shape.orientation, lanes: shape.lanes + 1)
@@ -495,43 +504,6 @@ final class StackingLayout {
         let cap = min(slotIdx, sw.count)
         sw.insert(1.0, at: cap)
         slotWeights[lane] = sw
-    }
-
-    /// Pick the OCCUPIED slot in `lane` whose centre is closest to
-    /// `point`'s slot-axis coordinate (Y in landscape, X in portrait).
-    /// Used by `stacking-move`'s OVERLAP action to land focused on top of
-    /// the existing window the user is "aiming at" instead of always
-    /// using slot 0. Returns nil when the lane is empty.
-    func nearestOccupiedSlot(in lane: Int, to point: CGPoint, available: Rect, innerGap: CGFloat = 0) -> Int? {
-        let occupied = Set(
-            placements.values
-                .filter { $0.lane0 <= lane && lane <= $0.lane1 }
-                .flatMap { $0.slot0...$0.slot1 }
-        )
-        if occupied.isEmpty { return nil }
-        let slots = slotCount(in: lane)
-        guard slots > 0 else { return nil }
-        var weights: [CGFloat] = []
-        for s in 0..<slots { weights.append(slotWeight(lane: lane, slot: s)) }
-        let total = weights.reduce(0, +)
-        guard total > 0 else { return occupied.sorted().first }
-        let landscape = shape.orientation == .landscape
-        let pt = landscape ? point.y : point.x
-        let start = landscape ? available.topLeftY : available.topLeftX
-        let extent = landscape ? available.height : available.width
-        let usable = extent - max(0, CGFloat(slots - 1)) * innerGap
-        var bestSlot: Int? = nil
-        var bestDist: CGFloat = .infinity
-        var c = start
-        for s in 0..<slots {
-            let w = weights[s] / total * usable
-            if occupied.contains(s) {
-                let d = abs(pt - (c + w / 2))
-                if d < bestDist { bestDist = d; bestSlot = s }
-            }
-            c += w + innerGap
-        }
-        return bestSlot
     }
 
     /// Pick the slot index in `lane` that best matches a vertical (or
@@ -676,13 +648,47 @@ final class StackingLayout {
     var observedMinSizes: [WindowId: CGSize] = [:]
 
     func laneWeight(lane: Int) -> CGFloat {
-        guard lane >= 0, lane < shape.lanes else { return 1.0 }
-        return _laneWeights?[lane] ?? 1.0
+        guard lane >= 0, lane < shape.lanes else { return Self.defaultColumnWidth }
+        return _laneWeights?[lane] ?? Self.defaultColumnWidth
     }
 
     func setLaneWeights(_ weights: [CGFloat]) {
         guard weights.count == shape.lanes, weights.allSatisfy({ $0 > 0 }) else { return }
         _laneWeights = weights
+    }
+
+    /// Size `lane` to exactly `fraction` of the lane axis among the
+    /// currently used lanes — column width in landscape, row height in
+    /// portrait (the axes invert with orientation). The other used lanes
+    /// keep their relative proportions and share the remaining
+    /// `1 - fraction`. No-op unless `0 < fraction < 1` and there are ≥2
+    /// used lanes (a lone lane fills the axis regardless of weight, since
+    /// empty lanes collapse). Used to open a terminal at a fixed width.
+    func setLaneFraction(_ fraction: CGFloat, lane: Int) {
+        guard fraction > 0, fraction < 1 else { return }
+        let used = usedLanes
+        guard used.contains(lane), used.count >= 2 else { return }
+        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        let others = used.filter { $0 != lane }
+        let othersSum = others.reduce(0.0) { $0 + weights[$1] }
+        guard othersSum > 0 else { return }
+        weights[lane] = fraction
+        let scale = (1 - fraction) / othersSum
+        for l in others { weights[l] = weights[l] * scale }
+        setLaneWeights(weights)
+    }
+
+    /// Set `lane`'s absolute desired width as a fraction of the lane-axis
+    /// extent (column width in landscape / row height in portrait), leaving
+    /// the other lanes' weights untouched. Combined with fit-or-center in
+    /// `resolveRect`: a used-lane total below 1 renders CENTERED with slack;
+    /// at or above 1 the columns shrink to fill. Used to open a terminal at
+    /// a fixed 1/3 (or 1/5) width that centers when it's the only column.
+    func setLaneAbsoluteWidth(_ fraction: CGFloat, lane: Int) {
+        guard fraction > 0, lane >= 0, lane < shape.lanes else { return }
+        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        weights[lane] = fraction
+        setLaneWeights(weights)
     }
 
     // MARK: Slot weights
@@ -765,37 +771,45 @@ extension StackingLayout {
         var laneExtent: CGFloat = 0
         for i in visIdx0...visIdx1 { laneExtent += usedLaneWeights[i] }
 
+        // mur — fit-or-center (naru-style, carousel disabled). Lane weights
+        // are absolute fractions of the lane-axis extent (default 1.0). If
+        // the used columns' desired total ≤ 1 the strip renders at those
+        // widths and is CENTERED (empty space split evenly on both sides);
+        // if it exceeds 1 the columns shrink by a shared factor to fill.
+        // `denom = max(1, totalLaneWeight)` unifies both: for the common
+        // default-weight case totalLaneWeight ≥ 1 so denom folds to a plain
+        // fill (offset 0) and existing layouts are unchanged.
+        let landscape = shape.orientation == .landscape
+        let laneAxisFull = landscape ? available.width : available.height
+        let usableLane = laneAxisFull - totalLaneGap
+        let denom = max(1.0, totalLaneWeight)
+        let laneScale = usableLane / denom
+        let laneContentTotal = totalLaneWeight * laneScale + totalLaneGap
+        let laneCenterOffset = max(0, (laneAxisFull - laneContentTotal) / 2)
+        let laneStartLow = laneCenterOffset + lanePrefix * laneScale + CGFloat(visIdx0) * innerGap
+        let laneSpan = laneExtent * laneScale + CGFloat(visIdx1 - visIdx0) * innerGap
+
         switch shape.orientation {
             case .landscape:
-                // Lane axis = X, slot axis = Y.
-                let usableW = available.width - totalLaneGap
+                // Lane axis = X (fit-or-center), slot axis = Y (fills column).
                 let usableH = available.height - totalSlotGap
-                let x = available.topLeftX
-                    + lanePrefix / totalLaneWeight * usableW
-                    + CGFloat(visIdx0) * innerGap
-                let laneSpanW = laneExtent / totalLaneWeight * usableW
-                    + CGFloat(visIdx1 - visIdx0) * innerGap
+                let x = available.topLeftX + laneStartLow
                 var y0 = available.topLeftY
                 for s in 0..<span.slot0 { y0 += weights[s] / totalWeight * usableH + innerGap }
                 var spanH: CGFloat = 0
                 for s in span.slot0...span.slot1 { spanH += weights[s] }
                 let h = spanH / totalWeight * usableH + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
-                return Rect(topLeftX: x, topLeftY: y0, width: laneSpanW, height: h)
+                return Rect(topLeftX: x, topLeftY: y0, width: laneSpan, height: h)
             case .portrait:
-                // Lane axis = Y, slot axis = X.
-                let usableH = available.height - totalLaneGap
+                // Lane axis = Y (fit-or-center), slot axis = X (fills row).
                 let usableW = available.width - totalSlotGap
-                let y = available.topLeftY
-                    + lanePrefix / totalLaneWeight * usableH
-                    + CGFloat(visIdx0) * innerGap
-                let laneSpanH = laneExtent / totalLaneWeight * usableH
-                    + CGFloat(visIdx1 - visIdx0) * innerGap
+                let y = available.topLeftY + laneStartLow
                 var x0 = available.topLeftX
                 for s in 0..<span.slot0 { x0 += weights[s] / totalWeight * usableW + innerGap }
                 var spanW: CGFloat = 0
                 for s in span.slot0...span.slot1 { spanW += weights[s] }
                 let w = spanW / totalWeight * usableW + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
-                return Rect(topLeftX: x0, topLeftY: y, width: w, height: laneSpanH)
+                return Rect(topLeftX: x0, topLeftY: y, width: w, height: laneSpan)
         }
     }
 }
@@ -829,11 +843,16 @@ extension StackingLayout {
                 usableMain = available.height - totalLaneGap
                 usableSecAxis = available.width
         }
-        // Walk lane partition.
-        var c = mainStart
+        // Walk lane partition (fit-or-center: mirror resolveRect).
+        let denom = max(1.0, totalLW)
+        let laneScale = usableMain / denom
+        let laneContentTotal = totalLW * laneScale + totalLaneGap
+        let laneAxisFull = usableMain + totalLaneGap
+        let laneCenterOffset = max(0, (laneAxisFull - laneContentTotal) / 2)
+        var c = mainStart + laneCenterOffset
         var lane = used.last ?? 0
         for (i, l) in used.enumerated() {
-            let w = usedLW[i] / totalLW * usableMain
+            let w = usedLW[i] * laneScale
             if mainPt < c + w { lane = l; break }
             c += w + innerGap
         }
