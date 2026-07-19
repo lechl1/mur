@@ -33,6 +33,41 @@ import Common
     "com.raphaelamorim.rio",     // Rio
 ]
 
+/// Hardcoded list of bundle IDs that should open FLOATING and CENTERED
+/// rather than tiled — the macOS System Settings app and other
+/// system dialog / utility windows. Extend as needed. (True modal dialogs
+/// with a dialog subrole are already handled via the popup shim; this list
+/// catches whole apps that present as normal windows but are dialog-like.)
+@MainActor let floatByDefaultBundleIds: Set<String> = [
+    "com.apple.systempreferences", // System Settings / System Preferences
+    "com.apple.SystemProfiler",    // System Information ("About This Mac")
+    "com.apple.ScreenSharing",     // Screen Sharing
+    "com.apple.print.add",         // Add Printer
+    "com.apple.PrintCenter",       // Print dialogs / queue
+    "com.apple.ColorSyncUtility",  // ColorSync Utility
+    "com.apple.KeychainAccess",    // Keychain Access
+]
+
+/// Pull `window` out of the grid, float it, and centre it on its monitor.
+/// The centring reads the window's AX size, so it's done asynchronously
+/// off the sync registration hot path.
+@MainActor
+func floatAndCenterWindow(_ window: Window, in workspace: Workspace) {
+    workspace.stackingLayout.remove(window.windowId)
+    window.bindAsFloatingWindow(to: workspace)
+    let windowId = window.windowId
+    Task { @MainActor in
+        guard let window = Window.get(byId: windowId), let workspace = window.nodeWorkspace else { return }
+        let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+        let size: CGSize = (try? await window.getAxRect())?.size
+            ?? window.lastFloatingSize
+            ?? CGSize(width: monRect.width / 2, height: monRect.height / 2)
+        let cx = monRect.topLeftX + (monRect.width - size.width) / 2
+        let cy = monRect.topLeftY + (monRect.height - size.height) / 2
+        window.setAxFrame(CGPoint(x: cx, y: cy), size)
+    }
+}
+
 /// Fraction of the lane axis a freshly-opened terminal column occupies:
 /// 1/5 on ultrawide monitors (aspect ≥ 2:1), 1/3 otherwise. Because the
 /// layout is columnar this is the column WIDTH in landscape and the row
@@ -98,6 +133,15 @@ func tryRegisterInStackingLayout(_ window: Window) {
     // anyway. Leaving them as floating from the start avoids the
     // in-grid flash and a wasted setAxFrame round-trip.
     if !appId.isEmpty && knownNonResizableAppIds.contains(appId) { return }
+
+    // mur — System Settings & other macOS dialog/utility apps float and
+    // centre by default (hardcoded list). Skip grid registration. A user
+    // who explicitly tiles one still gets it restored tiled via window
+    // memory (the async restore overrides this default).
+    if !appId.isEmpty && floatByDefaultBundleIds.contains(appId) {
+        floatAndCenterWindow(window, in: workspace)
+        return
+    }
     let shape = workspace.stackingLayout.shape
 
     // mur — recognized terminals open in their OWN column at a fixed
@@ -193,8 +237,15 @@ func restoreWindowStateOnRegister(_ window: Window) {
             let cx = monRect.topLeftX + (monRect.width - size.width) / 2
             let cy = monRect.topLeftY + (monRect.height - size.height) / 2
             window.setAxFrame(CGPoint(x: cx, y: cy), size)
-        } else if layout.placements[windowId] != state.span {
-            layout.place(windowId, at: state.span)
+        } else {
+            // Tiled: if it's currently floating (e.g. a float-by-default app
+            // the user chose to tile), re-bind it for tiling first.
+            if window.isFloating {
+                window.bind(to: workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+            }
+            if layout.placements[windowId] != state.span {
+                layout.place(windowId, at: state.span)
+            }
         }
         scheduleCancellableCompleteRefreshSession(.ax("restore-window-state"))
     }
