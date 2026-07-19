@@ -138,81 +138,55 @@ struct StackingMoveCommand: Command {
         }
 
         if isLaneAxis {
-            // Lane-axis press alternates between MERGE-AS-ROW and
-            // ADD-NEW-TILE on consecutive same-direction presses.
-            // Direction change OR window change resets the counter,
-            // and the first action of a fresh gesture is MERGE-AS-ROW.
-            let dir = args.direction.val
-            let isOverlap: Bool
-            if let g = stackingMoveGesture, g.windowId == window.windowId, g.direction == dir {
-                isOverlap = g.nextIsOverlap
-            } else {
-                isOverlap = true
-            }
-            stackingMoveGesture = StackingMoveGesture(
-                windowId: window.windowId, direction: dir, nextIsOverlap: !isOverlap,
-            )
+            // Deterministic lane-axis move (no alternation), keyed on how
+            // many windows share the source column:
+            //   - MORE THAN ONE window → EXTRACT the focused window into a
+            //     brand-new column in the press direction (works at an edge
+            //     too). The column-mates stay put.
+            //   - exactly ONE window → MERGE it into the adjacent column as
+            //     a new row, emptying the source column. With no adjacent
+            //     column it spills to the next workspace / monitor.
+            stackingMoveGesture = nil // lane moves are not a stateful gesture
 
             let myLane = signum > 0 ? current.lane1 : current.lane0
             let used = layout.usedLanes
             guard let visIdx = used.firstIndex(of: myLane) else { return .succ }
             let neighborVisIdx = signum > 0 ? visIdx + 1 : visIdx - 1
             let hasLaneMates = layout.windows(in: myLane).count >= 2
-            if neighborVisIdx >= 0 && neighborVisIdx < used.count {
-                if isOverlap {
-                    // MERGE-AS-ROW: move focused into the adjacent column
-                    // as a NEW ROW. The insertion slot is chosen from
-                    // focused's current position along the slot axis, so
-                    // it lands above/below the neighbour's rows to match
-                    // where the user aimed. It does NOT share a cell with
-                    // (stack on top of) an existing window.
-                    let targetLane = used[neighborVisIdx]
-                    let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
-                    let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
-                    let sg = CGFloat(resolved.inner.get(
-                        layout.shape.orientation == .landscape ? .v : .h,
-                    ))
-                    let focusedRect = window.lastAppliedLayoutPhysicalRect
-                        ?? layout.resolveRect(for: window.windowId, in: available, innerGap: sg)
-                    let center = focusedRect?.center ?? available.center
-                    let insertAt = layout.insertionSlot(
-                        in: targetLane, at: center, available: available, innerGap: sg,
-                    )
-                    layout.insertSlot(in: targetLane, at: insertAt)
-                    layout.place(window.windowId, at: TileSpan(
-                        lane0: targetLane, lane1: targetLane,
-                        slot0: insertAt, slot1: insertAt,
-                    ))
-                } else {
-                    // ADD-NEW-TILE: insert a fresh lane between source
-                    // and neighbour; focused moves into it alone.
-                    let insertIdx = signum > 0 ? myLane + 1 : myLane
-                    layout.insertLane(at: insertIdx)
-                    layout.place(window.windowId, at: TileSpan(
-                        lane0: insertIdx, lane1: insertIdx,
-                        slot0: 0, slot1: 0,
-                    ))
-                }
-            } else if hasLaneMates {
-                // Outward press at edge while overlapping → new column.
-                if signum > 0 {
-                    let nextEmpty = (used.last ?? -1) + 1
-                    let target = nextEmpty < layout.shape.lanes ? nextEmpty : layout.appendLane()
-                    layout.place(window.windowId, at: TileSpan(
-                        lane0: target, lane1: target,
-                        slot0: 0, slot1: 0,
-                    ))
-                } else {
-                    layout.insertLaneAtFront()
-                    layout.place(window.windowId, at: TileSpan(
-                        lane0: 0, lane1: 0,
-                        slot0: 0, slot1: 0,
-                    ))
-                }
+
+            if hasLaneMates {
+                // >1 window in the source column → extract into a new column.
+                let insertIdx = signum > 0 ? myLane + 1 : myLane
+                layout.insertLane(at: insertIdx)
+                layout.place(window.windowId, at: TileSpan(
+                    lane0: insertIdx, lane1: insertIdx, slot0: 0, slot1: 0,
+                ))
+            } else if neighborVisIdx >= 0 && neighborVisIdx < used.count {
+                // Lone window + an adjacent column → merge as a new row,
+                // inserted at the slot matching the window's current
+                // position (above/below the neighbour's rows). It does NOT
+                // share a cell with (stack on top of) an existing window.
+                let targetLane = used[neighborVisIdx]
+                let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+                let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
+                let sg = CGFloat(resolved.inner.get(
+                    layout.shape.orientation == .landscape ? .v : .h,
+                ))
+                let focusedRect = window.lastAppliedLayoutPhysicalRect
+                    ?? layout.resolveRect(for: window.windowId, in: available, innerGap: sg)
+                let center = focusedRect?.center ?? available.center
+                let insertAt = layout.insertionSlot(
+                    in: targetLane, at: center, available: available, innerGap: sg,
+                )
+                layout.insertSlot(in: targetLane, at: insertAt)
+                layout.place(window.windowId, at: TileSpan(
+                    lane0: targetLane, lane1: targetLane,
+                    slot0: insertAt, slot1: insertAt,
+                ))
             } else {
-                // Outward press at edge, alone → no in-workspace target.
-                // up/down → next/prev workspace; left/right → next monitor
-                // in that direction; otherwise fall back to shrink.
+                // Lone window at the edge, no adjacent column → spill to the
+                // next workspace (up/down) / monitor (left/right), else fall
+                // back to the edge shrink.
                 if !crossWorkspaceOrMonitorFallback(
                     direction: args.direction.val,
                     window: window,
