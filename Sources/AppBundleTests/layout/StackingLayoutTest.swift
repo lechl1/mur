@@ -388,6 +388,21 @@ struct StackingLayoutTest {
         #expect(abs((r1?.topLeftX ?? 0) - 450) < 0.001)
     }
 
+    @Test func closingAColumnKeepsSurvivorsWidthNoReclaim() {
+        // 3 default (0.4) columns → total 1.2 > 1 → shrunk to fill, each
+        // renders 300 px. Close one column: the survivors must KEEP their
+        // 300 px width (re-centred), not grow to 360 px to reclaim the gap.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.place(3, at: .soleSlot(lane: 2))
+        let before = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        #expect(abs((before?.width ?? 0) - 300) < 0.001)  // 0.4/1.2 * 900
+        layout.remove(3)
+        let after = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        #expect(abs((after?.width ?? 0) - 300) < 0.001)   // unchanged, not 360
+    }
+
     @Test func narrowColumnCentersPortrait() {
         let layout = StackingLayout(shape: .portraitDefault)
         layout.place(1, at: .soleSlot(lane: 0))

@@ -164,9 +164,7 @@ final class StackingLayout {
         if !oldUsedLanes.contains(requested.lane0),
            let w = oldFocusedLaneWeight, w > 0, oldUsedSum > w
         {
-            rebalanceForNewLaneRemembering(
-                requested.lane0, oldFocusedWeight: w, oldUsedSum: oldUsedSum,
-            )
+            rebalanceForNewLaneRemembering(requested.lane0, oldFocusedWeight: w)
         }
         // Slot-axis rebalance: moved into a fresh slot of an existing
         // lane. The new slot gets `1/N` of the lane height (landscape)
@@ -243,28 +241,19 @@ final class StackingLayout {
         setSlotWeights(lane: lane, weights: weights)
     }
 
-    /// Set the new lane's weight to the moved window's previous lane
-    /// weight. Surviving used lanes keep their relative proportions and
-    /// scale by `(oldUsedSum − oldFocusedWeight) / sum(survivor old
-    /// weights)` so the visible partition still sums to the available
-    /// width.
-    private func rebalanceForNewLaneRemembering(
-        _ newLaneIdx: Int,
-        oldFocusedWeight w: CGFloat,
-        oldUsedSum S: CGFloat,
-    ) {
-        let used = usedLanes
-        guard used.count >= 2, 0 <= newLaneIdx, newLaneIdx < shape.lanes else { return }
-        guard w > 0, S > w else { return }
+    /// Set the new lane's ABSOLUTE width to the moved window's previous
+    /// lane width and leave every other column's width untouched.
+    ///
+    /// In the fit-or-center model the used total is NOT conserved: the new
+    /// column simply adds its width and `resolveRect` re-centres (or
+    /// shrinks-to-fill if the total then exceeds 1). The old fill model
+    /// instead scaled the survivors to conserve the total, which made every
+    /// column shrink a little on each move into a new lane — the cause of
+    /// "columns keep shrinking when moving windows around".
+    private func rebalanceForNewLaneRemembering(_ newLaneIdx: Int, oldFocusedWeight w: CGFloat) {
+        guard 0 <= newLaneIdx, newLaneIdx < shape.lanes, w > 0 else { return }
         var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
-        let survivors = used.filter { $0 != newLaneIdx }
-        let survivorsOldSum = survivors.reduce(0.0) { $0 + weights[$1] }
-        guard survivorsOldSum > 0 else { return }
-        let scale = (S - w) / survivorsOldSum
         weights[newLaneIdx] = w
-        for l in survivors {
-            weights[l] = weights[l] * scale
-        }
         setLaneWeights(weights)
     }
 
@@ -324,11 +313,38 @@ final class StackingLayout {
 
     @discardableResult
     func remove(_ windowId: WindowId) -> TileSpan? {
-        guard let span = placements.removeValue(forKey: windowId) else { return nil }
+        guard let span = placements[windowId] else { return nil }
+        // If this closes a whole COLUMN (the window is alone in its lane),
+        // freeze the surviving columns at their current on-screen widths
+        // first — otherwise, when the columns were being shrunk to fill
+        // (used total > 1), dropping one lets fit-or-center render the rest
+        // WIDER to reclaim the freed space ("columns resize to fill the
+        // gap"). With this, the survivors keep their width and just
+        // re-centre.
+        if span.lane0 == span.lane1, windows(in: span.lane0).count == 1 {
+            commitRenderedLaneWidths()
+        }
+        placements.removeValue(forKey: windowId)
         zOrder.removeAll { $0 == windowId }
         for lane in span.lane0...span.lane1 { compactLaneIfNeeded(lane) }
         compactGaps()
         return span
+    }
+
+    /// Rewrite every used lane's weight to its current RENDERED fraction
+    /// (`weight / max(1, usedTotal)`). A no-op unless the columns were being
+    /// shrunk to fill (used total > 1). Called before removing a column so
+    /// the survivors keep their on-screen width instead of growing to
+    /// reclaim the space the removed column freed.
+    private func commitRenderedLaneWidths() {
+        let used = usedLanes
+        guard !used.isEmpty else { return }
+        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        let total = used.reduce(0.0) { $0 + weights[$1] }
+        let denom = max(1.0, total)
+        guard denom > 1 else { return }
+        for l in used { weights[l] = weights[l] / denom }
+        setLaneWeights(weights)
     }
 
     /// Squeeze out empty cells: shift used lanes leftward so they're
