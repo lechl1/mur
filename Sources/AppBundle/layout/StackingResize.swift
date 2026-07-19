@@ -144,17 +144,13 @@ enum StackingResize {
         var resultLaneWeights: [CGFloat]? = nil
         if (laneLow || laneHigh), sample.layout.usedLanes.contains(span.lane0) {
             let used = sample.layout.usedLanes
-            // mur — the OUTER edge of an edge column is pinned: never resize
-            // via the left edge of the left-most column or the right edge of
-            // the right-most column (the edges facing the centred slack /
-            // screen edge). Only a drag that moves an INNER edge — one shared
-            // with a neighbour — resizes. A lone column is both left- and
-            // right-most, so it isn't mouse-resizable on the lane axis.
-            let outerLow = span.lane0 == used.first
-            let outerHigh = span.lane1 == used.last
-            let innerEdgeDragged = (laneLow && !outerLow) || (laneHigh && !outerHigh)
+            // Any lane-axis edge resizes the column — including the OUTER
+            // edge of an edge column (left edge of the left-most column /
+            // right edge of the right-most): dragging it into the centred
+            // slack grows the column, dragging inward shrinks it. fit-or-
+            // center re-centres the strip afterwards.
             let usable = laneAxisExtent - max(0, CGFloat(used.count - 1)) * sample.innerGap
-            if innerEdgeDragged, usable > 0 {
+            if usable > 0 {
                 var weights: [CGFloat] = (0..<sample.layout.shape.lanes)
                     .map { sample.layout.laneWeight(lane: $0) }
                 // Snapshot used lanes as their current rendered fractions

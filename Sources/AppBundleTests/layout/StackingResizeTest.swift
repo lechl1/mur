@@ -52,10 +52,10 @@ struct StackingResizeTest {
         #expect(result?.slotLane == nil)
     }
 
-    @Test func loneColumnNotResizableOnLaneAxis() {
-        // A lone column is both left-most and right-most, so both its
-        // lane-axis edges are "outer" (facing the centred slack) and are
-        // pinned — dragging them does nothing.
+    @Test func loneColumnResizableOnOuterEdge() {
+        // A lone column's edges are "outer" (facing the centred slack), and
+        // they DO resize it: dragging the right edge from 450→300 px sets
+        // its absolute width to 300/900 = 0.333, rendered centred.
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         let last = Rect(topLeftX: 0, topLeftY: 0, width: 450, height: 600)
@@ -65,7 +65,12 @@ struct StackingResizeTest {
             lastAppliedRect: last, currentRect: cur,
             available: landscapeAvail, innerGap: 0,
         ))
-        #expect(result == nil)
+        let lw = result?.laneWeights ?? []
+        #expect(abs(lw[0] - 0.3333) < 0.01)
+        layout.setLaneWeights(lw)
+        let r = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        #expect(abs((r?.width ?? 0) - 300) < 0.01)
+        #expect(abs((r?.topLeftX ?? 0) - 300) < 0.01) // (900-300)/2, centred
     }
 
     // MARK: portrait — axes flip
