@@ -185,17 +185,15 @@ struct StackingMoveCommand: Command {
                 ))
             } else {
                 // Lone window at the edge, no adjacent column → spill to the
-                // next workspace (up/down) / monitor (left/right), else fall
-                // back to the edge shrink.
-                if !crossWorkspaceOrMonitorFallback(
+                // next workspace (up/down) / monitor (left/right). If there's
+                // no monitor in that direction, do nothing — no edge resize.
+                _ = crossWorkspaceOrMonitorFallback(
                     direction: args.direction.val,
                     window: window,
                     sourceWorkspace: workspace,
                     target: target,
                     io: io,
-                ) {
-                    StackingResize.resizeLane(layout: layout, lane: myLane, signum: -1)
-                }
+                )
             }
         } else {
             // Slot axis (top/bottom in landscape, left/right in portrait).
