@@ -3,9 +3,9 @@ import Common
 import Foundation
 
 /// `mur stacking-float` — pull the focused (or `--window-id`) window out
-/// of the workspace's grid and re-bind it as floating. Also forgets
-/// the matching `WindowMemory` entry so a subsequent reopen of the
-/// same app+title doesn't auto-restore into the grid.
+/// of the workspace's grid and re-bind it as floating. Persists the
+/// FLOATING mode in `WindowMemory` (keyed by app + title) so a restart —
+/// or a later reopen of the same window — restores it as floating.
 ///
 /// To re-tile a floating window, run `mur stacking-place <lane> <slot0> <slot1>`.
 struct StackingFloatCommand: Command {
@@ -47,7 +47,9 @@ struct StackingFloatCommand: Command {
 
             let appId = window.app.rawAppBundleId ?? ""
             let title = (try? await window.title) ?? ""
-            windowMemory.forget(appId: appId, title: title, shape: layout.shape)
+            // Persist FLOATING (not forget) so a restart restores this
+            // window as floating rather than re-tiling it.
+            windowMemory.rememberFloating(appId: appId, title: title, shape: layout.shape)
             windowMemory.save()
         }
         return .succ

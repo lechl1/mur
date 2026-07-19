@@ -123,18 +123,66 @@ func tryRegisterInStackingLayout(_ window: Window) {
         return
     }
 
-    let span: TileSpan
-    if let recalled = windowMemory.recall(appId: appId, title: "", shape: shape) {
-        span = recalled
-    } else {
-        // Anchor the heuristic to the focused tiled window's lane if
-        // any. Uses the cached `focus` (sync) instead of
-        // getNativeFocusedWindow() (async + AX-bound).
-        let focusedLane = focus.windowOrNil
-            .flatMap { workspace.stackingLayout.placements[$0.windowId]?.lane0 }
-        span = workspace.stackingLayout.placementForNewWindow(focusedLane: focusedLane)
-        windowMemory.remember(appId: appId, title: "", shape: shape, span: span)
-        windowMemory.save()
-    }
+    // Place heuristically for now (sync, no title). The PRECISE per-title
+    // state — floating vs tiled, and where — is restored asynchronously by
+    // `restoreWindowStateOnRegister(_:)`, which can await the window title
+    // off this hot path. Anchor the heuristic to the focused tiled window's
+    // lane if any (cached `focus`, sync).
+    _ = shape
+    let focusedLane = focus.windowOrNil
+        .flatMap { workspace.stackingLayout.placements[$0.windowId]?.lane0 }
+    let span = workspace.stackingLayout.placementForNewWindow(focusedLane: focusedLane)
     workspace.stackingLayout.place(window.windowId, at: span)
+}
+
+/// Restore a window's remembered mode after it's been registered.
+///
+/// Runs async so it can `await window.title` (the title keys the store,
+/// distinguishing multiple windows of one app). Looks up the saved
+/// `StoredWindowState` for (appId, title, shape):
+///   - **floating** → pull the window out of the grid and re-float it,
+///     centred on its monitor;
+///   - **tiled** → move it to the stored span if it isn't already there;
+///   - **no memory** → remember the current (heuristic) placement, keyed by
+///     the real title, so it restores precisely next time.
+///
+/// This is what lets mur "take control of existing windows" after a restart:
+/// each window returns to the floating-or-column state it had before.
+@MainActor
+func restoreWindowStateOnRegister(_ window: Window) {
+    guard config.experimentalStackingLayout else { return }
+    let windowId = window.windowId
+    Task { @MainActor in
+        guard let workspace = window.nodeWorkspace else { return }
+        let layout = workspace.stackingLayout
+        let appId = window.app.rawAppBundleId ?? ""
+        let title = (try? await window.title) ?? ""
+        let shape = layout.shape
+
+        guard let state = windowMemory.recall(appId: appId, title: title, shape: shape) else {
+            // First time we've seen this exact window — remember where the
+            // heuristic just put it, keyed by the real title.
+            if let span = layout.placements[windowId] {
+                windowMemory.remember(appId: appId, title: title, shape: shape, span: span)
+                windowMemory.save()
+            }
+            return
+        }
+
+        if state.floating {
+            guard layout.placements[windowId] != nil else { return } // already floating
+            layout.remove(windowId)
+            window.bindAsFloatingWindow(to: workspace)
+            let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+            let size: CGSize = (try? await window.getAxRect())?.size
+                ?? window.lastFloatingSize
+                ?? CGSize(width: monRect.width / 2, height: monRect.height / 2)
+            let cx = monRect.topLeftX + (monRect.width - size.width) / 2
+            let cy = monRect.topLeftY + (monRect.height - size.height) / 2
+            window.setAxFrame(CGPoint(x: cx, y: cy), size)
+        } else if layout.placements[windowId] != state.span {
+            layout.place(windowId, at: state.span)
+        }
+        scheduleCancellableCompleteRefreshSession(.ax("restore-window-state"))
+    }
 }

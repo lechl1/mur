@@ -42,6 +42,10 @@ final class MacWindow: Window {
         // Strictly sync — see tryRegisterInStackingLayout's note about the
         // startup hot path and AX reentrancy hazards.
         tryRegisterInStackingLayout(window)
+        // mur — restore this window's remembered mode (floating vs tiled,
+        // keyed by app + title). Async so it can await the title; corrects
+        // the sync heuristic placement above.
+        restoreWindowStateOnRegister(window)
         return window
     }
 
