@@ -224,18 +224,11 @@ private func runCoordinatedRestore() async {
     for id in ids {
         guard let window = Window.get(byId: id), let curWs = window.nodeWorkspace else { continue }
         let appId = window.app.rawAppBundleId ?? ""
-        // Terminals restore by CWD (stable) rather than by title (which
-        // changes with the running command). Read the cwd from AX and match
-        // a saved TerminalSession.
-        if sessionRestoreTerminalBundleIds.contains(appId),
-           let cwd = try? await window.cwd, !cwd.isEmpty,
-           let session = terminalSessionStore.recall(cwd: cwd)
-        {
-            let ws = (!session.workspace.isEmpty && session.workspace != curWs.name)
-                ? Workspace.get(byName: session.workspace) : curWs
-            tiled.append(Tiled(window: window, workspace: ws, lane: session.span.lane0, slot: session.span.slot0))
-            continue
-        }
+        // NB: terminals are NOT restored by cwd here — several terminals can
+        // share one cwd (e.g. multiple claude sessions in the same repo), so
+        // a cwd key would collapse them all into one column. They fall
+        // through to the title/heuristic path, keeping distinct columns. The
+        // cwd is used only for RELAUNCH (spawning missing sessions).
         let title = (try? await window.title) ?? ""
         let shape = curWs.stackingLayout.shape
         guard let state = windowMemory.recall(appId: appId, title: title, shape: shape) else {
@@ -266,12 +259,19 @@ private func runCoordinatedRestore() async {
             }
         }
         // Rank stored lanes → contiguous columns; sort each column by stored
-        // slot → contiguous rows.
+        // slot → contiguous rows. CRITICAL: place columns in ASCENDING order.
+        // `place()` compacts lanes leftward after every call, so placing a
+        // high column while lower ones are still empty would shift it to
+        // column 0 and make the next columns collide there (all windows
+        // stacking in the first column). Ascending placement keeps every
+        // just-placed column adjacent to the previous one, so compaction is a
+        // no-op and the ranks are preserved.
         let laneRank = Dictionary(uniqueKeysWithValues:
             Set(group.map { $0.lane }).sorted().enumerated().map { ($1, $0) })
-        for (lane, laneWindows) in Dictionary(grouping: group, by: { $0.lane }) {
+        let byLane = Dictionary(grouping: group, by: { $0.lane })
+        for lane in byLane.keys.sorted() {
             let column = laneRank[lane] ?? 0
-            for (row, t) in laneWindows.sorted(by: { $0.slot < $1.slot }).enumerated() {
+            for (row, t) in byLane[lane]!.sorted(by: { $0.slot < $1.slot }).enumerated() {
                 layout.place(t.window.windowId, at: .single(lane: column, slot: row))
             }
         }
