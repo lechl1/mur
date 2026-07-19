@@ -147,10 +147,10 @@ private func crossEdgeFocus(
     let dest: Workspace?
     switch direction {
         case .up, .down:
-            dest = getNextPrevWorkspace(
-                current: sourceWorkspace, isNext: direction == .down,
-                wrapAround: true, stdin: nil, target: target,
-            )
+            // Down → next, up → previous workspace on the same monitor,
+            // INCLUDING empty ones, so the focus can leave the screen onto a
+            // workspace that currently has no windows and still switch there.
+            dest = adjacentWorkspaceIncludingEmpty(from: sourceWorkspace, isNext: direction == .down)
         case .left, .right:
             switch MonitorTarget.direction(direction).resolve(
                 sourceWorkspace.workspaceMonitor, wrapAround: false,
@@ -169,9 +169,30 @@ private func crossEdgeFocus(
         entryWin.nativeFocus()
         dest.stackingLayout.promote(entryId)
     } else {
+        // Empty destination → still switch to it (blank workspace).
         _ = dest.focusWorkspace()
     }
     return .succ
+}
+
+/// Next (`isNext`) / previous workspace on `current`'s monitor, INCLUDING
+/// empty ones. Unlike a bare `Workspace.all` walk, this materialises every
+/// declared (persistent) workspace so an empty workspace between two used
+/// ones is still navigable and the focus can switch onto it. Wraps around;
+/// returns nil only when the monitor has a single navigable workspace.
+@MainActor
+private func adjacentWorkspaceIncludingEmpty(from current: Workspace, isNext: Bool) -> Workspace? {
+    let monitorCorner = current.workspaceMonitor.rect.topLeftCorner
+    var byName: [String: Workspace] = [current.name: current]
+    for name in config.persistentWorkspaces { byName[name] = Workspace.get(byName: name) }
+    for ws in Workspace.all { byName[ws.name] = ws }
+    let ordered = byName.values
+        .filter { $0.workspaceMonitor.rect.topLeftCorner == monitorCorner }
+        .sorted()
+    guard ordered.count > 1, let idx = ordered.firstIndex(of: current) else { return nil }
+    let n = ((isNext ? idx + 1 : idx - 1) % ordered.count + ordered.count) % ordered.count
+    let dest = ordered[n]
+    return dest == current ? nil : dest
 }
 
 /// Inner gap (slot axis) for a workspace's stacking layout.
