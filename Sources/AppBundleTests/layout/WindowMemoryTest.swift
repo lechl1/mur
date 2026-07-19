@@ -15,18 +15,20 @@ struct WindowMemoryTest {
         defer { try? FileManager.default.removeItem(at: url) }
         let shape = LayoutShape.landscapeDefault
         let mem = WindowMemory(storeURL: url)
-        mem.remember(appId: "com.app", title: "Doc A", shape: shape, span: .single(lane: 2, slot: 1))
-        mem.rememberFloating(appId: "com.app", title: "Doc B", shape: shape)
+        mem.remember(appId: "com.app", title: "Doc A", workspace: "3", shape: shape, span: .single(lane: 2, slot: 1))
+        mem.rememberFloating(appId: "com.app", title: "Doc B", workspace: "web", shape: shape)
         mem.save()
 
-        // Reload from disk — mode + span survive, and the title
+        // Reload from disk — mode + span + workspace survive, and the title
         // distinguishes the two windows of the same app.
         let reloaded = WindowMemory(storeURL: url)
         let a = reloaded.recall(appId: "com.app", title: "Doc A", shape: shape)
         let b = reloaded.recall(appId: "com.app", title: "Doc B", shape: shape)
         #expect(a?.floating == false)
         #expect(a?.span == TileSpan.single(lane: 2, slot: 1))
+        #expect(a?.workspace == "3")
         #expect(b?.floating == true)
+        #expect(b?.workspace == "web")
         #expect(reloaded.recall(appId: "com.app", title: "Doc C", shape: shape) == nil)
     }
 
@@ -35,10 +37,11 @@ struct WindowMemoryTest {
         defer { try? FileManager.default.removeItem(at: url) }
         let shape = LayoutShape.landscapeDefault
         let mem = WindowMemory(storeURL: url)
-        mem.remember(appId: "x", title: "t", shape: shape, span: .single(lane: 3, slot: 0))
-        mem.rememberFloating(appId: "x", title: "t", shape: shape)
+        mem.remember(appId: "x", title: "t", workspace: "1", shape: shape, span: .single(lane: 3, slot: 0))
+        mem.rememberFloating(appId: "x", title: "t", workspace: "1", shape: shape)
         let s = mem.recall(appId: "x", title: "t", shape: shape)
         #expect(s?.floating == true)
         #expect(s?.span == TileSpan.single(lane: 3, slot: 0)) // span preserved for a later re-tile
+        #expect(s?.workspace == "1")
     }
 }

@@ -18,14 +18,16 @@ struct WindowMemoryKey: Hashable, Codable {
     let windowTitle: String
 }
 
-/// A remembered window mode: floating, or tiled at a span.
+/// A remembered window mode: floating, or tiled at a span, plus the
+/// workspace it lived in. The `span` fixes its position relative to the
+/// other windows in that workspace's grid.
 struct StoredWindowState: Equatable {
     var floating: Bool
     /// The window's tile. Ignored while `floating`; kept so an un-float can
     /// restore the previous tile.
     var span: TileSpan
-
-    static func tiled(_ span: TileSpan) -> StoredWindowState { .init(floating: false, span: span) }
+    /// Name of the workspace the window belonged to (empty = unknown).
+    var workspace: String
 }
 
 struct WindowMemoryEntry: Codable, Equatable {
@@ -35,6 +37,7 @@ struct WindowMemoryEntry: Codable, Equatable {
     let slot0: Int
     let slot1: Int
     let floating: Bool
+    let workspace: String
 
     init(shape: LayoutShape, state: StoredWindowState) {
         self.shape = shape
@@ -43,17 +46,23 @@ struct WindowMemoryEntry: Codable, Equatable {
         self.slot0 = state.span.slot0
         self.slot1 = state.span.slot1
         self.floating = state.floating
+        self.workspace = state.workspace
     }
 
     var state: StoredWindowState {
-        StoredWindowState(floating: floating, span: TileSpan(lane0: lane0, lane1: lane1, slot0: slot0, slot1: slot1))
+        StoredWindowState(
+            floating: floating,
+            span: TileSpan(lane0: lane0, lane1: lane1, slot0: slot0, slot1: slot1),
+            workspace: workspace,
+        )
     }
 
     // Codable migration:
     //  - v1 payloads encoded a single `lane` field → decode as lane0 == lane1.
     //  - pre-floating payloads have no `floating` field → default to false.
+    //  - pre-workspace payloads have no `workspace` field → default to "".
     enum CodingKeys: String, CodingKey {
-        case shape, lane, lane0, lane1, slot0, slot1, floating
+        case shape, lane, lane0, lane1, slot0, slot1, floating, workspace
     }
 
     init(from decoder: Decoder) throws {
@@ -72,6 +81,7 @@ struct WindowMemoryEntry: Codable, Equatable {
             self.lane1 = lane
         }
         self.floating = try c.decodeIfPresent(Bool.self, forKey: .floating) ?? false
+        self.workspace = try c.decodeIfPresent(String.self, forKey: .workspace) ?? ""
     }
 
     func encode(to encoder: Encoder) throws {
@@ -82,6 +92,7 @@ struct WindowMemoryEntry: Codable, Equatable {
         try c.encode(slot0, forKey: .slot0)
         try c.encode(slot1, forKey: .slot1)
         try c.encode(floating, forKey: .floating)
+        try c.encode(workspace, forKey: .workspace)
     }
 }
 
@@ -111,21 +122,22 @@ final class WindowMemory {
 
     // MARK: mutation
 
-    /// Remember the window as TILED at `span`.
-    func remember(appId: String, title: String, shape: LayoutShape, span: TileSpan) {
+    /// Remember the window as TILED at `span` in `workspace`.
+    func remember(appId: String, title: String, workspace: String, shape: LayoutShape, span: TileSpan) {
         let key = WindowMemoryKey(appId: appId, windowTitle: title)
         var byShape = entries[shape] ?? [:]
-        byShape[key] = .tiled(span)
+        byShape[key] = StoredWindowState(floating: false, span: span, workspace: workspace)
         entries[shape] = byShape
     }
 
-    /// Remember the window as FLOATING, keeping any previously-remembered
-    /// span so a later re-tile can return it to its old cell.
-    func rememberFloating(appId: String, title: String, shape: LayoutShape) {
+    /// Remember the window as FLOATING in `workspace`, keeping any
+    /// previously-remembered span so a later re-tile can return it to its
+    /// old cell.
+    func rememberFloating(appId: String, title: String, workspace: String, shape: LayoutShape) {
         let key = WindowMemoryKey(appId: appId, windowTitle: title)
         var byShape = entries[shape] ?? [:]
         let span = byShape[key]?.span ?? .soleSlot(lane: 0)
-        byShape[key] = StoredWindowState(floating: true, span: span)
+        byShape[key] = StoredWindowState(floating: true, span: span, workspace: workspace)
         entries[shape] = byShape
     }
 
@@ -165,7 +177,7 @@ final class WindowMemory {
                 flat.append(Keyed(key: key, entry: WindowMemoryEntry(shape: shape, state: state)))
             }
         }
-        let payload = OnDisk(version: 3, entries: flat)
+        let payload = OnDisk(version: 4, entries: flat)
         let dir = storeURL.deletingLastPathComponent()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         guard let data = try? JSONEncoder().encode(payload) else { return }

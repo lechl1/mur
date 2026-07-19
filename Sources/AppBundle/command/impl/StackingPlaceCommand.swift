@@ -49,7 +49,7 @@ struct StackingPlaceCommand: Command {
         Task { @MainActor in
             let appId = window.app.rawAppBundleId ?? ""
             let title = (try? await window.title) ?? ""
-            windowMemory.remember(appId: appId, title: title, shape: shape, span: span)
+            windowMemory.remember(appId: appId, title: title, workspace: workspace.name, shape: shape, span: span)
             windowMemory.save()
         }
 

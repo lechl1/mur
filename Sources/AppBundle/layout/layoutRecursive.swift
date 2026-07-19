@@ -128,7 +128,9 @@ extension Workspace {
                         window.setAxFrame(CGPoint(x: cx, y: cy), actual.size)
                         // Persist floating so a restart restores it floating.
                         let title = (try? await window.title) ?? ""
-                        windowMemory.rememberFloating(appId: appId, title: title, shape: workspace.stackingLayout.shape)
+                        windowMemory.rememberFloating(
+                            appId: appId, title: title, workspace: workspace.name, shape: workspace.stackingLayout.shape,
+                        )
                         windowMemory.save()
                     } else {
                         workspace.stackingLayout.verifiedResizableWindows.insert(windowId)

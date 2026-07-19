@@ -113,7 +113,7 @@ struct StackingMoveCommand: Command {
             Task { @MainActor in
                 let appId = window.app.rawAppBundleId ?? ""
                 let title = (try? await window.title) ?? ""
-                windowMemory.remember(appId: appId, title: title, shape: layout.shape, span: span)
+                windowMemory.remember(appId: appId, title: title, workspace: workspace.name, shape: layout.shape, span: span)
                 windowMemory.save()
             }
             return .succ
@@ -275,7 +275,7 @@ struct StackingMoveCommand: Command {
             Task { @MainActor in
                 let appId = window.app.rawAppBundleId ?? ""
                 let title = (try? await window.title) ?? ""
-                windowMemory.remember(appId: appId, title: title, shape: shape, span: newSpan)
+                windowMemory.remember(appId: appId, title: title, workspace: workspace.name, shape: shape, span: newSpan)
                 windowMemory.save()
             }
         }

@@ -49,7 +49,7 @@ struct StackingFloatCommand: Command {
             let title = (try? await window.title) ?? ""
             // Persist FLOATING (not forget) so a restart restores this
             // window as floating rather than re-tiling it.
-            windowMemory.rememberFloating(appId: appId, title: title, shape: layout.shape)
+            windowMemory.rememberFloating(appId: appId, title: title, workspace: workspace.name, shape: layout.shape)
             windowMemory.save()
         }
         return .succ

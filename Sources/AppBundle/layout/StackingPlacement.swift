@@ -153,24 +153,37 @@ func restoreWindowStateOnRegister(_ window: Window) {
     guard config.experimentalStackingLayout else { return }
     let windowId = window.windowId
     Task { @MainActor in
-        guard let workspace = window.nodeWorkspace else { return }
-        let layout = workspace.stackingLayout
+        guard let currentWorkspace = window.nodeWorkspace else { return }
         let appId = window.app.rawAppBundleId ?? ""
         let title = (try? await window.title) ?? ""
-        let shape = layout.shape
+        let shape = currentWorkspace.stackingLayout.shape
 
         guard let state = windowMemory.recall(appId: appId, title: title, shape: shape) else {
             // First time we've seen this exact window — remember where the
-            // heuristic just put it, keyed by the real title.
-            if let span = layout.placements[windowId] {
-                windowMemory.remember(appId: appId, title: title, shape: shape, span: span)
+            // heuristic just put it, keyed by the real title + workspace.
+            if let span = currentWorkspace.stackingLayout.placements[windowId] {
+                windowMemory.remember(
+                    appId: appId, title: title, workspace: currentWorkspace.name, shape: shape, span: span,
+                )
                 windowMemory.save()
             }
             return
         }
 
+        // Restore the remembered WORKSPACE first: move the window there so
+        // its span (which fixes its position relative to that workspace's
+        // other windows) applies in the right grid.
+        var workspace = currentWorkspace
+        if !state.workspace.isEmpty, state.workspace != currentWorkspace.name {
+            let dest = Workspace.get(byName: state.workspace)
+            currentWorkspace.stackingLayout.remove(windowId)
+            let container: NonLeafTreeNodeObject = state.floating ? dest : dest.rootTilingContainer
+            window.bind(to: container, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+            workspace = dest
+        }
+        let layout = workspace.stackingLayout
+
         if state.floating {
-            guard layout.placements[windowId] != nil else { return } // already floating
             layout.remove(windowId)
             window.bindAsFloatingWindow(to: workspace)
             let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
