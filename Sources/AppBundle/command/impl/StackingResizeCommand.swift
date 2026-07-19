@@ -2,20 +2,21 @@ import AppKit
 import Common
 import Foundation
 
-/// `mur stacking-resize <left|down|up|right>` — bloom-resize the focused
-/// window's column / row in the press direction. The window itself
-/// stays put; only lane / slot weights change. Window movement lives
-/// on `mur stacking-move`.
+/// `mur stacking-resize <left|down|up|right>` — resize the focused
+/// window's column / row **towards the centre**. The window itself stays
+/// put; only lane / slot weights change. Window movement lives on
+/// `mur stacking-move`.
 ///
-///   - landscape: left/right shrink/grow the column; up/down shrink/grow
-///     the row within the focused lane.
+///   - landscape: left/right shrink/grow the column WIDTH; up/down
+///     shrink/grow the row height within the focused lane.
 ///   - portrait flips the axes.
 ///
-/// The resize walks a discrete fraction ladder (1/16 ↔ 1/2 ↔ 15/16) so
-/// repeated presses snap to recognisable proportions. The freed (or
-/// borrowed) weight is distributed across the other used lanes / slots
-/// proportionally to keep the partition tight and never sends any
-/// lane / slot below 1/16.
+/// Positional: the arrow pointing towards the centre of the grid grows,
+/// the opposite shrinks. The COLUMN (lane) axis resizes by ABSOLUTE width
+/// (`resizeLaneAbsolute`) so fit-or-center re-centres the strip — the
+/// column grows / shrinks symmetrically about the screen centre. The ROW
+/// (slot) axis, which fills the column, walks the discrete fraction
+/// ladder (1/16 ↔ 1/2 ↔ 15/16), redistributing among the other rows.
 struct StackingResizeCommand: Command {
     let args: StackingResizeCmdArgs
     /*conforms*/ let shouldResetClosedWindowsCache = false
@@ -96,7 +97,9 @@ struct StackingResizeCommand: Command {
         let signum = rawSignum == growSignThisAxis ? +1 : -1
 
         if isLaneAxis {
-            StackingResize.resizeLane(layout: layout, lane: current.lane0, signum: signum)
+            // Resize-towards-centre: change the column's ABSOLUTE width so
+            // fit-or-center re-centres the strip (matches the mouse resize).
+            StackingResize.resizeLaneAbsolute(layout: layout, lane: current.lane0, signum: signum)
         } else {
             StackingResize.resizeSlot(layout: layout, lane: current.lane0, slot: current.slot0, signum: signum)
         }
@@ -188,6 +191,24 @@ extension StackingResize {
         }
         repairFloor(weights: &weights, used: used, minPer: minPer)
         if weights.contains(where: { $0 <= 0 }) { return }
+        layout.setLaneWeights(weights)
+    }
+
+    /// Grow (`signum > 0`) / shrink (`signum < 0`) `lane`'s ABSOLUTE width
+    /// by `step` (a fraction of the lane axis), clamped to `[0.1, 1.0]`.
+    /// Unlike `resizeLane` (a constant-total ladder that redistributes
+    /// among lanes), this changes ONLY this column's width — fit-or-center
+    /// then re-centres the strip, so the column grows / shrinks
+    /// symmetrically about the screen centre (naru resize-towards-centre).
+    /// Works for a lone column too (the ladder version is a no-op there).
+    static func resizeLaneAbsolute(layout: StackingLayout, lane: Int, signum: Int, step: CGFloat = 0.1) {
+        guard lane >= 0, lane < layout.shape.lanes, layout.usedLanes.contains(lane) else { return }
+        var weights: [CGFloat] = []
+        for l in 0..<layout.shape.lanes { weights.append(layout.laneWeight(lane: l)) }
+        let cur = weights[lane]
+        let next = max(0.1, min(1.0, cur + CGFloat(signum) * step))
+        guard abs(next - cur) > 1e-6 else { return }
+        weights[lane] = next
         layout.setLaneWeights(weights)
     }
 
