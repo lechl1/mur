@@ -209,6 +209,14 @@ enum Ax {
         key: kAXIdentifierAttribute,
         getter: { $0 as? String },
     )
+    // mur — the window's represented document URL. Terminals with shell
+    // integration (Ghostty, Terminal.app, iTerm2, …) set this to a
+    // `file://` URL of the current working directory, which is how mur
+    // reads a terminal window's cwd for session restore.
+    static let documentAttr = ReadableAttrImpl<String>(
+        key: kAXDocumentAttribute,
+        getter: { $0 as? String },
+    )
     // static let modalAttr = ReadableAttrImpl<Bool>(
     //     key: kAXModalAttribute,
     //     getter: { $0 as? Bool },

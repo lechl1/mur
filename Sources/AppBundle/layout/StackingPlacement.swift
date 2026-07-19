@@ -224,6 +224,18 @@ private func runCoordinatedRestore() async {
     for id in ids {
         guard let window = Window.get(byId: id), let curWs = window.nodeWorkspace else { continue }
         let appId = window.app.rawAppBundleId ?? ""
+        // Terminals restore by CWD (stable) rather than by title (which
+        // changes with the running command). Read the cwd from AX and match
+        // a saved TerminalSession.
+        if sessionRestoreTerminalBundleIds.contains(appId),
+           let cwd = try? await window.cwd, !cwd.isEmpty,
+           let session = terminalSessionStore.recall(cwd: cwd)
+        {
+            let ws = (!session.workspace.isEmpty && session.workspace != curWs.name)
+                ? Workspace.get(byName: session.workspace) : curWs
+            tiled.append(Tiled(window: window, workspace: ws, lane: session.span.lane0, slot: session.span.slot0))
+            continue
+        }
         let title = (try? await window.title) ?? ""
         let shape = curWs.stackingLayout.shape
         guard let state = windowMemory.recall(appId: appId, title: title, shape: shape) else {
@@ -279,5 +291,23 @@ private func runCoordinatedRestore() async {
     }
 
     windowMemory.save()
+
+    // Record/refresh each terminal's session (cwd + position + claude) so a
+    // future restart can restore — and, once, relaunch any saved session
+    // whose window is gone (gated by experimental-session-restore).
+    for id in ids {
+        if let window = Window.get(byId: id), let ws = window.nodeWorkspace {
+            captureTerminalSession(window, in: ws)
+        }
+    }
+    if !didAttemptSessionRelaunch {
+        didAttemptSessionRelaunch = true
+        relaunchMissingTerminalSessions()
+    }
+
     scheduleCancellableCompleteRefreshSession(.ax("restore-window-state"))
 }
+
+/// One-shot guard: relaunch missing terminal sessions only on the first
+/// (startup) coordinated restore, never on later window-open batches.
+@MainActor private var didAttemptSessionRelaunch = false

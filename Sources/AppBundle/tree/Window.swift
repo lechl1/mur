@@ -32,6 +32,9 @@ open class Window: TreeNode, Hashable {
 
     func getAxSize() async throws -> CGSize? { die("Not implemented") }
     var title: String { get async throws { die("Not implemented") } }
+    /// Current working directory (from the window's represented document
+    /// URL). Non-nil for terminals with shell integration. See `getAxCwd`.
+    var cwd: String? { get async throws { nil } }
     var isMacosFullscreen: Bool { get async throws { false } }
     var isMacosMinimized: Bool { get async throws { false } } // todo replace with enum MacOsWindowNativeState { normal, fullscreen, invisible }
     var isHiddenInCorner: Bool { die("Not implemented") }

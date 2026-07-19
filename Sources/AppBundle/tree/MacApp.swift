@@ -249,6 +249,17 @@ final class MacApp: AbstractApp {
         }
     }
 
+    /// The window's cwd, read from its represented document URL
+    /// (`file://…` → path). Terminals with shell integration set this to
+    /// the current working directory. `nil` if unset / not a `file://` URL.
+    func getAxCwd(_ windowId: UInt32) async throws -> String? {
+        let doc = try await withWindow(windowId) { window, job in
+            window.get(Ax.documentAttr)
+        }
+        guard let doc, let url = URL(string: doc), url.isFileURL else { return nil }
+        return url.path
+    }
+
     func isMacosNativeFullscreen(_ windowId: UInt32) async throws -> Bool? {
         try await withWindow(windowId) { window, job in
             window.get(Ax.isFullscreenAttr)
