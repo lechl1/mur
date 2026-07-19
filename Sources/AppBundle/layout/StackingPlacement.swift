@@ -179,85 +179,105 @@ func tryRegisterInStackingLayout(_ window: Window) {
     workspace.stackingLayout.place(window.windowId, at: span)
 }
 
-/// Restore a window's remembered mode after it's been registered.
+/// Windows awaiting a coordinated restore, and the debounced task that runs
+/// it. Restore is batched (not per-window) so a whole workspace — including
+/// multi-row columns — is reconstructed together; see `runCoordinatedRestore`.
+@MainActor private var pendingRestoreIds: Set<WindowId> = []
+@MainActor private var coordinatedRestoreTask: Task<Void, Never>?
+
+/// Queue `window` for a coordinated restore of its remembered state.
 ///
-/// Runs async so it can `await window.title` (the title keys the store,
-/// distinguishing multiple windows of one app). Looks up the saved
-/// `StoredWindowState` for (appId, title, shape):
-///   - **floating** → pull the window out of the grid and re-float it,
-///     centred on its monitor;
-///   - **tiled** → move it to the stored span if it isn't already there;
-///   - **no memory** → remember the current (heuristic) placement, keyed by
-///     the real title, so it restores precisely next time.
-///
-/// This is what lets mur "take control of existing windows" after a restart:
-/// each window returns to the floating-or-column state it had before.
+/// Restoring windows ONE BY ONE is broken for multi-row columns: `place()`
+/// compacts slots after every call, so a window restored to slot 2 of an
+/// otherwise-empty column is renumbered to slot 0, and the real slot-0
+/// window then collides with it. Instead we collect all just-registered
+/// windows (debounced — startup registers them in a tight loop) and rebuild
+/// each workspace's grid at once, preserving relative lane/row order.
 @MainActor
 func restoreWindowStateOnRegister(_ window: Window) {
     guard config.experimentalStackingLayout else { return }
-    let windowId = window.windowId
-    Task { @MainActor in
-        guard let currentWorkspace = window.nodeWorkspace else { return }
+    pendingRestoreIds.insert(window.windowId)
+    coordinatedRestoreTask?.cancel()
+    coordinatedRestoreTask = Task { @MainActor in
+        try? await Task.sleep(nanoseconds: 90_000_000) // debounce past the registration loop
+        if Task.isCancelled { return }
+        await runCoordinatedRestore()
+    }
+}
+
+/// Rebuild the grid for every pending window from `WindowMemory`, preserving
+/// each column's relative row order. For each destination workspace the
+/// tiled windows are grouped by their stored lane, the distinct lanes are
+/// ranked to contiguous columns, and within each lane the windows are sorted
+/// by their stored slot and placed at contiguous rows — so multi-row columns
+/// come back exactly. Floating windows are re-floated; first-seen windows
+/// (no memory) keep their heuristic placement, remembered by real title.
+@MainActor
+private func runCoordinatedRestore() async {
+    let ids = pendingRestoreIds
+    pendingRestoreIds = []
+
+    struct Tiled { let window: Window; let workspace: Workspace; let lane: Int; let slot: Int }
+    var tiled: [Tiled] = []
+    var floaters: [(window: Window, workspace: Workspace)] = []
+
+    for id in ids {
+        guard let window = Window.get(byId: id), let curWs = window.nodeWorkspace else { continue }
         let appId = window.app.rawAppBundleId ?? ""
         let title = (try? await window.title) ?? ""
-        let shape = currentWorkspace.stackingLayout.shape
-
+        let shape = curWs.stackingLayout.shape
         guard let state = windowMemory.recall(appId: appId, title: title, shape: shape) else {
-            // First time we've seen this exact window — remember where the
-            // heuristic just put it, keyed by the real title + workspace.
-            if let span = currentWorkspace.stackingLayout.placements[windowId] {
-                windowMemory.remember(
-                    appId: appId, title: title, workspace: currentWorkspace.name, shape: shape, span: span,
-                )
-                windowMemory.save()
+            // First-seen — keep the heuristic placement, remember it by title.
+            if let span = curWs.stackingLayout.placements[id] {
+                windowMemory.remember(appId: appId, title: title, workspace: curWs.name, shape: shape, span: span)
             }
-            return
+            continue
         }
-
-        // Restore the remembered WORKSPACE first: move the window there so
-        // its span (which fixes its position relative to that workspace's
-        // other windows) applies in the right grid.
-        var workspace = currentWorkspace
-        if !state.workspace.isEmpty, state.workspace != currentWorkspace.name {
-            let dest = Workspace.get(byName: state.workspace)
-            currentWorkspace.stackingLayout.remove(windowId)
-            let container: NonLeafTreeNodeObject = state.floating ? dest : dest.rootTilingContainer
-            window.bind(to: container, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
-            workspace = dest
-        }
-        let layout = workspace.stackingLayout
-
+        let targetWs = (!state.workspace.isEmpty && state.workspace != curWs.name)
+            ? Workspace.get(byName: state.workspace) : curWs
         if state.floating {
-            layout.remove(windowId)
-            window.bindAsFloatingWindow(to: workspace)
-            let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
-            let size: CGSize = (try? await window.getAxRect())?.size
-                ?? window.lastFloatingSize
-                ?? CGSize(width: monRect.width / 2, height: monRect.height / 2)
-            let cx = monRect.topLeftX + (monRect.width - size.width) / 2
-            let cy = monRect.topLeftY + (monRect.height - size.height) / 2
-            window.setAxFrame(CGPoint(x: cx, y: cy), size)
+            floaters.append((window, targetWs))
         } else {
-            // Tiled: if it's currently floating (e.g. a float-by-default app
-            // the user chose to tile), re-bind it for tiling first.
-            if window.isFloating {
-                window.bind(to: workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
-            }
-            // Don't STACK onto a window that already holds the stored cell.
-            // Two windows of the same app with the same title share one
-            // (appId, title) memory entry, so they recall the SAME span — the
-            // second must go to its own fresh column instead of stacking on
-            // the first ("left-most column stacks the second on restart").
-            let occupied = layout.placements.contains { wid, span in
-                wid != windowId && span.lane0 == state.span.lane0 && span.slot0 == state.span.slot0
-            }
-            let targetSpan = occupied
-                ? TileSpan.soleSlot(lane: layout.emptyLanes.first ?? layout.appendLane())
-                : state.span
-            if layout.placements[windowId] != targetSpan {
-                layout.place(windowId, at: targetSpan)
+            tiled.append(Tiled(window: window, workspace: targetWs, lane: state.span.lane0, slot: state.span.slot0))
+        }
+    }
+
+    // Reconstruct each workspace's columns/rows from the tiled windows.
+    for (_, group) in Dictionary(grouping: tiled, by: { $0.workspace.name }) {
+        guard let workspace = group.first?.workspace else { continue }
+        let layout = workspace.stackingLayout
+        // Detach every window from wherever it is (incl. other workspaces).
+        for t in group {
+            t.window.nodeWorkspace?.stackingLayout.remove(t.window.windowId)
+            if t.window.nodeWorkspace != workspace {
+                t.window.bind(to: workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
             }
         }
-        scheduleCancellableCompleteRefreshSession(.ax("restore-window-state"))
+        // Rank stored lanes → contiguous columns; sort each column by stored
+        // slot → contiguous rows.
+        let laneRank = Dictionary(uniqueKeysWithValues:
+            Set(group.map { $0.lane }).sorted().enumerated().map { ($1, $0) })
+        for (lane, laneWindows) in Dictionary(grouping: group, by: { $0.lane }) {
+            let column = laneRank[lane] ?? 0
+            for (row, t) in laneWindows.sorted(by: { $0.slot < $1.slot }).enumerated() {
+                layout.place(t.window.windowId, at: .single(lane: column, slot: row))
+            }
+        }
     }
+
+    // Re-float the floaters, centred on their monitor.
+    for f in floaters {
+        f.window.nodeWorkspace?.stackingLayout.remove(f.window.windowId)
+        f.window.bindAsFloatingWindow(to: f.workspace)
+        let monRect = f.workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+        let size: CGSize = (try? await f.window.getAxRect())?.size
+            ?? f.window.lastFloatingSize
+            ?? CGSize(width: monRect.width / 2, height: monRect.height / 2)
+        let cx = monRect.topLeftX + (monRect.width - size.width) / 2
+        let cy = monRect.topLeftY + (monRect.height - size.height) / 2
+        f.window.setAxFrame(CGPoint(x: cx, y: cy), size)
+    }
+
+    windowMemory.save()
+    scheduleCancellableCompleteRefreshSession(.ax("restore-window-state"))
 }
