@@ -41,16 +41,67 @@ private func crossWorkspaceOrMonitorFallback(
             }
     }
     guard let dest, dest != sourceWorkspace else { return false }
+    let sourceRect = window.lastAppliedLayoutPhysicalRect
     _ = sourceWorkspace.stackingLayout.remove(window.windowId)
     _ = moveWindowToWorkspace(
         window, dest, io,
         focusFollowsWindow: true, failIfNoop: false,
     )
-    tryRegisterInStackingLayout(window)
+    // Best-effort: insert the window into the destination grid at the cell
+    // it "enters" — the edge opposite the move direction, aligned to where
+    // it exited — rather than the generic placement heuristic.
+    insertMovedWindowPositionally(
+        window, into: dest, direction: direction,
+        sourceRect: sourceRect, sourceWorkspace: sourceWorkspace,
+    )
     if let newSpan = dest.stackingLayout.placements[window.windowId] {
         StackingHud.shared.update(layout: dest.stackingLayout, span: newSpan)
     }
     return true
+}
+
+/// Insert `window` into `dest`'s grid at the cell it enters when moved in
+/// `direction`: the edge opposite the move (right → dest's left edge,
+/// down → dest's top edge, …), aligned to where the window exited the
+/// source (mapped proportionally across monitors of different sizes). It
+/// merges as a new row of the entered column, inserted between that
+/// column's windows at the matching position — so a cross-workspace /
+/// cross-monitor move lands where you'd expect, like an in-workspace merge.
+@MainActor
+private func insertMovedWindowPositionally(
+    _ window: Window,
+    into dest: Workspace,
+    direction: CardinalDirection,
+    sourceRect: Rect?,
+    sourceWorkspace: Workspace,
+) {
+    let layout = dest.stackingLayout
+    let destAvail = dest.workspaceMonitor.visibleRectPaddedByOuterGaps
+    let sg = CGFloat(ResolvedGaps(gaps: config.gaps, monitor: dest.workspaceMonitor)
+        .inner.get(layout.shape.orientation == .landscape ? .v : .h))
+    if layout.isEmpty {
+        layout.place(window.windowId, at: .soleSlot(lane: 0))
+        return
+    }
+    // Proportional position of where the window exited the source.
+    let srcAvail = sourceWorkspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+    let srcCenter = sourceRect?.center ?? srcAvail.center
+    let fx = srcAvail.width > 0 ? (srcCenter.x - srcAvail.topLeftX) / srcAvail.width : 0.5
+    let fy = srcAvail.height > 0 ? (srcCenter.y - srcAvail.topLeftY) / srcAvail.height : 0.5
+    let entry: CGPoint
+    switch direction {
+        case .right: entry = CGPoint(x: destAvail.topLeftX + 1,                       y: destAvail.topLeftY + fy * destAvail.height)
+        case .left:  entry = CGPoint(x: destAvail.topLeftX + destAvail.width - 1,      y: destAvail.topLeftY + fy * destAvail.height)
+        case .down:  entry = CGPoint(x: destAvail.topLeftX + fx * destAvail.width,     y: destAvail.topLeftY + 1)
+        case .up:    entry = CGPoint(x: destAvail.topLeftX + fx * destAvail.width,     y: destAvail.topLeftY + destAvail.height - 1)
+    }
+    guard let cell = layout.cellAt(point: entry, in: destAvail, innerGap: sg) else {
+        layout.place(window.windowId, at: .soleSlot(lane: 0))
+        return
+    }
+    let insertAt = layout.insertionSlot(in: cell.lane, at: entry, available: destAvail, innerGap: sg)
+    layout.insertSlot(in: cell.lane, at: insertAt)
+    layout.place(window.windowId, at: .single(lane: cell.lane, slot: insertAt))
 }
 
 /// Per-window alternation state for `stacking-move` on the lane axis.
