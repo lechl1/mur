@@ -243,8 +243,19 @@ func restoreWindowStateOnRegister(_ window: Window) {
             if window.isFloating {
                 window.bind(to: workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
             }
-            if layout.placements[windowId] != state.span {
-                layout.place(windowId, at: state.span)
+            // Don't STACK onto a window that already holds the stored cell.
+            // Two windows of the same app with the same title share one
+            // (appId, title) memory entry, so they recall the SAME span — the
+            // second must go to its own fresh column instead of stacking on
+            // the first ("left-most column stacks the second on restart").
+            let occupied = layout.placements.contains { wid, span in
+                wid != windowId && span.lane0 == state.span.lane0 && span.slot0 == state.span.slot0
+            }
+            let targetSpan = occupied
+                ? TileSpan.soleSlot(lane: layout.emptyLanes.first ?? layout.appendLane())
+                : state.span
+            if layout.placements[windowId] != targetSpan {
+                layout.place(windowId, at: targetSpan)
             }
         }
         scheduleCancellableCompleteRefreshSession(.ax("restore-window-state"))
