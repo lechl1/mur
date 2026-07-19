@@ -269,32 +269,27 @@ final class StackingLayout {
     }
 
     /// Grow `lane`'s weight so its rendered main-axis size hits at
-    /// least `requiredPx`. Other used lanes shrink proportionally.
-    /// Each donor stays above `usedTotal/16` so the resize ladder's
-    /// minimum is preserved. No-op when there's only one used lane.
+    /// Grow `lane`'s ABSOLUTE width so it renders at least `requiredPx`
+    /// (when the used total is ≤ 1). Fit-or-center consistent: the rendered
+    /// px is `weight / max(1, usedTotal) · totalUsablePx`, and growth only
+    /// RAISES this lane's weight — it never shrinks the other columns.
+    /// fit-or-center shrinks everything proportionally if the total then
+    /// overflows, so a neighbour is never pushed toward zero and repeated
+    /// calls can't make columns progressively shrink. Cap at full width.
     /// Used by the forced-resize path for windows that own their tile.
     @discardableResult
     func growLaneToFit(requiredPx: CGFloat, lane: Int, totalUsablePx: CGFloat) -> Bool {
         let used = usedLanes
-        guard used.count >= 2, lane >= 0, lane < shape.lanes, totalUsablePx > 0 else { return false }
+        guard lane >= 0, lane < shape.lanes, totalUsablePx > 0, used.contains(lane) else { return false }
         var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
         let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
         guard usedTotal > 0 else { return false }
-        let pxPerWeight = totalUsablePx / usedTotal
-        let currentPx = weights[lane] * pxPerWeight
+        let denom = max(1.0, usedTotal)
+        let currentPx = weights[lane] / denom * totalUsablePx
         if currentPx + 1 >= requiredPx { return false }
-        let minOther: CGFloat = usedTotal / 16
-        let maxAllowed = usedTotal - CGFloat(used.count - 1) * minOther
-        let newW = min(requiredPx / pxPerWeight, maxAllowed)
-        if newW <= weights[lane] { return false }
-        let delta = newW - weights[lane]
-        let sumOthers = usedTotal - weights[lane]
-        guard sumOthers > 0 else { return false }
-        weights[lane] = newW
-        for l in used where l != lane {
-            weights[l] -= delta * (weights[l] / sumOthers)
-        }
-        if weights.contains(where: { $0 <= 0 }) { return false }
+        let target = min(1.0, requiredPx / totalUsablePx)
+        if target <= weights[lane] { return false }
+        weights[lane] = target
         setLaneWeights(weights)
         return true
     }
@@ -799,7 +794,8 @@ extension StackingLayout {
                 var spanH: CGFloat = 0
                 for s in span.slot0...span.slot1 { spanH += weights[s] }
                 let h = spanH / totalWeight * usableH + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
-                return Rect(topLeftX: x, topLeftY: y0, width: laneSpan, height: h)
+                // Never emit a negative size (e.g. gaps wider than the axis).
+                return Rect(topLeftX: x, topLeftY: y0, width: max(0, laneSpan), height: max(0, h))
             case .portrait:
                 // Lane axis = Y (fit-or-center), slot axis = X (fills row).
                 let usableW = available.width - totalSlotGap
@@ -809,7 +805,8 @@ extension StackingLayout {
                 var spanW: CGFloat = 0
                 for s in span.slot0...span.slot1 { spanW += weights[s] }
                 let w = spanW / totalWeight * usableW + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
-                return Rect(topLeftX: x0, topLeftY: y, width: w, height: laneSpan)
+                // Never emit a negative size (e.g. gaps wider than the axis).
+                return Rect(topLeftX: x0, topLeftY: y, width: max(0, w), height: max(0, laneSpan))
         }
     }
 }
