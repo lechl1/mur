@@ -61,10 +61,11 @@ struct Config: ConvenienceCopyable {
     var onWindowDetected: [WindowDetectedCallback] = []
     var onModeChanged: [any Command] = []
 
-    /// mur phase 1 feature flag. Default false → behaves exactly like
-    /// AeroSpace. When true, workspaces use the column-major grid layout
-    /// (see docs/MUR_DESIGN.md) instead of the tree-based one.
-    var experimentalStackingLayout: Bool = false
+    /// mur phase 1 feature flag. When true (the mur default), workspaces
+    /// use the columnar grid layout — the model mur exists to provide (see
+    /// the "Layout model" note in CLAUDE.md and docs/MUR_DESIGN.md). Set to
+    /// false to fall back to AeroSpace's tree-based (i3-style) layout.
+    var experimentalStackingLayout: Bool = true
 }
 
 enum DefaultContainerOrientation: String {
