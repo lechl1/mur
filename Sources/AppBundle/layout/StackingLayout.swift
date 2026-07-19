@@ -258,59 +258,6 @@ final class StackingLayout {
     }
 
     /// Grow `lane`'s weight so its rendered main-axis size hits at
-    /// Grow `lane`'s ABSOLUTE width so it renders at least `requiredPx`
-    /// (when the used total is ≤ 1). Fit-or-center consistent: the rendered
-    /// px is `weight / max(1, usedTotal) · totalUsablePx`, and growth only
-    /// RAISES this lane's weight — it never shrinks the other columns.
-    /// fit-or-center shrinks everything proportionally if the total then
-    /// overflows, so a neighbour is never pushed toward zero and repeated
-    /// calls can't make columns progressively shrink. Cap at full width.
-    /// Used by the forced-resize path for windows that own their tile.
-    @discardableResult
-    func growLaneToFit(requiredPx: CGFloat, lane: Int, totalUsablePx: CGFloat) -> Bool {
-        let used = usedLanes
-        guard lane >= 0, lane < shape.lanes, totalUsablePx > 0, used.contains(lane) else { return false }
-        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
-        let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
-        guard usedTotal > 0 else { return false }
-        let denom = max(1.0, usedTotal)
-        let currentPx = weights[lane] / denom * totalUsablePx
-        if currentPx + 1 >= requiredPx { return false }
-        let target = min(1.0, requiredPx / totalUsablePx)
-        if target <= weights[lane] { return false }
-        weights[lane] = target
-        setLaneWeights(weights)
-        return true
-    }
-
-    /// Same idea on the slot axis within `lane`.
-    @discardableResult
-    func growSlotToFit(requiredPx: CGFloat, lane: Int, slot: Int, totalUsablePx: CGFloat) -> Bool {
-        guard 0 <= lane, lane < shape.lanes, totalUsablePx > 0 else { return false }
-        let slots = slotCount(in: lane)
-        guard slots >= 2, slot >= 0, slot < slots else { return false }
-        var weights: [CGFloat] = (0..<slots).map { slotWeight(lane: lane, slot: $0) }
-        let total = weights.reduce(0, +)
-        guard total > 0 else { return false }
-        let pxPerWeight = totalUsablePx / total
-        let currentPx = weights[slot] * pxPerWeight
-        if currentPx + 1 >= requiredPx { return false }
-        let minOther: CGFloat = total / 16
-        let maxAllowed = total - CGFloat(slots - 1) * minOther
-        let newW = min(requiredPx / pxPerWeight, maxAllowed)
-        if newW <= weights[slot] { return false }
-        let delta = newW - weights[slot]
-        let sumOthers = total - weights[slot]
-        guard sumOthers > 0 else { return false }
-        weights[slot] = newW
-        for s in 0..<slots where s != slot {
-            weights[s] -= delta * (weights[s] / sumOthers)
-        }
-        if weights.contains(where: { $0 <= 0 }) { return false }
-        setSlotWeights(lane: lane, weights: weights)
-        return true
-    }
-
     @discardableResult
     func remove(_ windowId: WindowId) -> TileSpan? {
         guard let span = placements[windowId] else { return nil }
@@ -648,15 +595,6 @@ final class StackingLayout {
     /// tolerance. Cached so the post-layout verification AX query only
     /// runs ONCE per window, not on every refresh.
     var verifiedResizableWindows: Set<WindowId> = []
-
-    /// Minimum content size observed for a window — populated by the
-    /// post-`setAxFrame` fit-check whenever an app refused to shrink.
-    /// On subsequent layouts the pre-pass uses these to size the tile
-    /// correctly the first time so there's no visible "set small →
-    /// grow" jump. Only applied when the window is alone in its lane
-    /// (single window per tile) — overlapping or stacked layouts use
-    /// best-effort sizing instead.
-    var observedMinSizes: [WindowId: CGSize] = [:]
 
     func laneWeight(lane: Int) -> CGFloat {
         guard lane >= 0, lane < shape.lanes else { return Self.defaultColumnWidth }
