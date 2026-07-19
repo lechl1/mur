@@ -67,13 +67,13 @@ struct Config: ConvenienceCopyable {
     /// false to fall back to AeroSpace's tree-based (i3-style) layout.
     var experimentalStackingLayout: Bool = true
 
-    /// mur — when true, on startup mur RELAUNCHES terminal sessions
-    /// (Ghostty) whose window is no longer open, in their saved working
-    /// directory, resuming `claude` for sessions that were running it.
-    /// Default false because it spawns processes; opt in explicitly. The
+    /// mur — when true (the mur default), on startup mur RELAUNCHES terminal
+    /// sessions (Ghostty) whose window is no longer open, in their saved
+    /// working directory, resuming `claude` for sessions that were running
+    /// it. Set to false to disable the process-spawning relaunch. The
     /// per-window cwd + grid position are always tracked regardless of this
     /// flag (see TerminalSessionStore) so positions restore by cwd.
-    var experimentalSessionRestore: Bool = false
+    var experimentalSessionRestore: Bool = true
 }
 
 enum DefaultContainerOrientation: String {
