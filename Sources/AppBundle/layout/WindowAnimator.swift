@@ -86,6 +86,26 @@ final class WindowAnimator {
         animatingIds.remove(wid)
     }
 
+    /// Whether the animator is ACTIVELY driving `wid`'s frame right now. The
+    /// AX move/resize observers and the auto-fit pre-pass call this to
+    /// ignore the notifications caused by our own per-frame `setAxFrame`.
+    ///
+    /// Crucially it SELF-HEALS: if `wid` lingers in `animatingIds` without a
+    /// live animation (its `Anim` is gone, or it has run past `maxDuration`
+    /// because the timer stalled), the stale entry is pruned and `false`
+    /// returned. Without this, one missed cleanup would make the observers
+    /// swallow that window's resize/move events forever — "resize stops
+    /// working until I restart mur".
+    func isDrivingFrame(_ wid: WindowId) -> Bool {
+        guard animatingIds.contains(wid) else { return false }
+        guard let a = anims[wid], now() - a.start < maxDuration else {
+            anims[wid] = nil
+            animatingIds.remove(wid)
+            return false
+        }
+        return true
+    }
+
     private func finish(_ wid: WindowId, to: Rect, window: Window) {
         anims[wid] = nil
         animatingIds.remove(wid)
@@ -125,7 +145,8 @@ final class WindowAnimator {
 
     private func tick() {
         let t0 = now()
-        for (wid, a) in anims {
+        // Iterate a snapshot — `finish`/`cancel` mutate `anims`.
+        for (wid, a) in Array(anims) {
             guard let window = Window.get(byId: wid) else { cancel(wid); continue }
             let settledByTime = t0 - a.start >= maxDuration
             let r = interpolate(a, at: t0)

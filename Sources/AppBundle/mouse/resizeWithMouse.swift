@@ -11,7 +11,12 @@ func resizedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutabl
         guard let token: RunSessionGuard = .isServerEnabled else { return }
         // mur — our own animation frames fire resize notifications; ignore
         // them so the animator doesn't trigger a refresh storm.
-        if let windowId, WindowAnimator.shared.animatingIds.contains(windowId) { return }
+        if let windowId, WindowAnimator.shared.isDrivingFrame(windowId) { return }
+        // mur — self-heal stuck mouse-manipulation state: if the left button
+        // is up, no resize/move is in progress, so clear any leftover
+        // `currentlyManipulatedWithMouseWindowId` (a missed mouse-up would
+        // otherwise block resizing every other window until restart).
+        if !isLeftMouseButtonDown { try? await resetManipulatedWithMouseIfPossible() }
         guard let windowId, let window = Window.get(byId: windowId), try await isManipulatedWithMouse(window) else {
             scheduleCancellableCompleteRefreshSession(.ax(notif))
             return

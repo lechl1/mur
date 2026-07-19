@@ -109,7 +109,7 @@ extension Workspace {
                     try? await Task.sleep(nanoseconds: 150_000_000)
                     // Skip while the animator is still driving this window —
                     // its live rect is mid-flight, not the applied target.
-                    if WindowAnimator.shared.animatingIds.contains(windowId) { return }
+                    if WindowAnimator.shared.isDrivingFrame(windowId) { return }
                     guard let actual = try? await window.getAxRect() else { return }
                     let widthDiff = abs(actual.width - r.width)
                     let heightDiff = abs(actual.height - r.height)
@@ -215,7 +215,7 @@ fileprivate func scheduleStackingFitCheck(window: Window, requested r: Rect, wor
         try? await Task.sleep(nanoseconds: 20_000_000)
         if Task.isCancelled { return }
         // Skip while the animator is still driving this window.
-        if WindowAnimator.shared.animatingIds.contains(windowId) { return }
+        if WindowAnimator.shared.isDrivingFrame(windowId) { return }
         guard let actual = try? await window.getAxRect() else { return }
         let widthOver = actual.width - r.width
         let heightOver = actual.height - r.height
