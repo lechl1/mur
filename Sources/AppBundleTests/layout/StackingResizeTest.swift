@@ -52,11 +52,10 @@ struct StackingResizeTest {
         #expect(result?.slotLane == nil)
     }
 
-    @Test func landscapeShrinkLoneColumnCentersViaResize() {
-        // A single filling column dragged narrower → its absolute width
-        // drops below 1, so fit-or-center will center it. Resize-toward-
-        // center: the lone column can now be shrunk (old transfer resize
-        // was a no-op with no neighbour).
+    @Test func loneColumnNotResizableOnLaneAxis() {
+        // A lone column is both left-most and right-most, so both its
+        // lane-axis edges are "outer" (facing the centred slack) and are
+        // pinned — dragging them does nothing.
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         let last = Rect(topLeftX: 0, topLeftY: 0, width: 450, height: 600)
@@ -66,13 +65,7 @@ struct StackingResizeTest {
             lastAppliedRect: last, currentRect: cur,
             available: landscapeAvail, innerGap: 0,
         ))
-        let lw = result?.laneWeights ?? []
-        #expect(abs(lw[0] - 0.3333) < 0.01)   // 300 / 900
-        // And it renders centered at that width.
-        layout.setLaneWeights(lw)
-        let r = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
-        #expect(abs((r?.width ?? 0) - 300) < 0.01)
-        #expect(abs((r?.topLeftX ?? 0) - 300) < 0.01) // (900-300)/2
+        #expect(result == nil)
     }
 
     // MARK: portrait — axes flip
