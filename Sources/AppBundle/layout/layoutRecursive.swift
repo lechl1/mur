@@ -83,17 +83,19 @@ extension Workspace {
             _ = stackingLayout.growSlotToFit(requiredPx: minSlotPx, lane: span.lane0, slot: span.slot0, totalUsablePx: usableSlotPx)
         }
 
+        // mur — collect every window's target rect FIRST, then hand the whole
+        // set to the animator after the loop. Computing all targets up front
+        // means columns that swap positions animate past each other (each
+        // window's current position is captured before any window moves).
+        var animationBatch: [(window: Window, from: Rect?, to: Rect)] = []
         for windowId in stackingLayout.zOrder {
             guard let window = Window.get(byId: windowId) else { continue }
             if window.windowId == currentlyManipulatedWithMouseWindowId { continue }
             guard let r = stackingLayout.resolveRect(for: windowId, in: rect, innerGap: slotGap) else { continue }
-            // mur — spring-animate toward the target rect (naru feel). The
-            // animator drives per-frame setAxFrames itself and suppresses the
-            // resulting AX-notification refreshes via `animatingIds`.
             let previous = window.lastAppliedLayoutPhysicalRect
             window.lastAppliedLayoutVirtualRect = r
-            WindowAnimator.shared.animate(window, from: previous, to: r)
             window.lastAppliedLayoutPhysicalRect = r
+            animationBatch.append((window: window, from: previous, to: r))
 
             // mur — auto-float non-resizable windows. Once per window:
             // wait briefly for the resize to settle, then compare the
@@ -146,6 +148,9 @@ extension Workspace {
                 scheduleStackingFitCheck(window: window, requested: r, workspace: self, slotGap: slotGap)
             }
         }
+        // mur — animate the whole set together (single shared clock → all
+        // windows/columns in the move start and finish in lockstep).
+        WindowAnimator.shared.animateBatch(animationBatch)
         for window in children.filterIsInstance(of: Window.self) {
             window.lastAppliedLayoutPhysicalRect = nil
             window.lastAppliedLayoutVirtualRect = nil
