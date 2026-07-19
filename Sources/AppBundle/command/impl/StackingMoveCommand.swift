@@ -54,11 +54,12 @@ private func crossWorkspaceOrMonitorFallback(
 }
 
 /// Per-window alternation state for `stacking-move` on the lane axis.
-/// Same window + same direction → toggle between OVERLAP (merge into
-/// neighbour as a new row) and ADD-NEW-TILE (insert a new column
-/// between source and neighbour). Direction change OR window change
-/// resets the counter, and the first action of a fresh gesture is
-/// OVERLAP.
+/// Same window + same direction → toggle between MERGE-AS-ROW (move into
+/// the neighbour column as a new row) and ADD-NEW-TILE (insert a new
+/// column between source and neighbour). Direction change OR window
+/// change resets the counter, and the first action of a fresh gesture is
+/// MERGE-AS-ROW — moving into an adjacent column inserts a row there, it
+/// never stacks focused on top of an existing window.
 @MainActor private var stackingMoveGesture: StackingMoveGesture? = nil
 
 @MainActor
@@ -137,10 +138,10 @@ struct StackingMoveCommand: Command {
         }
 
         if isLaneAxis {
-            // Lane-axis press alternates between OVERLAP and
+            // Lane-axis press alternates between MERGE-AS-ROW and
             // ADD-NEW-TILE on consecutive same-direction presses.
             // Direction change OR window change resets the counter,
-            // and the first action of a fresh gesture is OVERLAP.
+            // and the first action of a fresh gesture is MERGE-AS-ROW.
             let dir = args.direction.val
             let isOverlap: Bool
             if let g = stackingMoveGesture, g.windowId == window.windowId, g.direction == dir {
@@ -159,11 +160,12 @@ struct StackingMoveCommand: Command {
             let hasLaneMates = layout.windows(in: myLane).count >= 2
             if neighborVisIdx >= 0 && neighborVisIdx < used.count {
                 if isOverlap {
-                    // OVERLAP: pick the existing window in the adjacent
-                    // column whose centre is closest to focused's
-                    // current centre (position-aware), and place focused
-                    // at that same slot — the two windows share the
-                    // cell and visually overlap (z-order decides front).
+                    // MERGE-AS-ROW: move focused into the adjacent column
+                    // as a NEW ROW. The insertion slot is chosen from
+                    // focused's current position along the slot axis, so
+                    // it lands above/below the neighbour's rows to match
+                    // where the user aimed. It does NOT share a cell with
+                    // (stack on top of) an existing window.
                     let targetLane = used[neighborVisIdx]
                     let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
                     let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
@@ -173,12 +175,13 @@ struct StackingMoveCommand: Command {
                     let focusedRect = window.lastAppliedLayoutPhysicalRect
                         ?? layout.resolveRect(for: window.windowId, in: available, innerGap: sg)
                     let center = focusedRect?.center ?? available.center
-                    let targetSlot = layout.nearestOccupiedSlot(
-                        in: targetLane, to: center, available: available, innerGap: sg,
-                    ) ?? 0
+                    let insertAt = layout.insertionSlot(
+                        in: targetLane, at: center, available: available, innerGap: sg,
+                    )
+                    layout.insertSlot(in: targetLane, at: insertAt)
                     layout.place(window.windowId, at: TileSpan(
                         lane0: targetLane, lane1: targetLane,
-                        slot0: targetSlot, slot1: targetSlot,
+                        slot0: insertAt, slot1: insertAt,
                     ))
                 } else {
                     // ADD-NEW-TILE: insert a fresh lane between source
