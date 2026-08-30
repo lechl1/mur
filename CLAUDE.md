@@ -44,6 +44,20 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   — mur gives up after `autoUnminimizeGiveUpAfter` (2s) if the app insists.
   An explicit `macos-native-minimize` opts out (it records the window in
   `intentionallyMinimizedWindowIds`) and frees the cell instead.
+- **One window per cell; float first, mount a beat later.** Two windows may
+  never share a `(lane, slot)` — they'd resolve to identical rects and render
+  as one window swallowing the other. `StackingLayout.place` enforces this by
+  pushing the occupant (and everything below it in the lane) down a slot, so a
+  placement INSERTS rather than lands on top. On top of that, a window that
+  opens while mur is already running is bound as a **floating** window at
+  registration and joins the grid ~90ms later from `runCoordinatedRestore`
+  (`pendingGridMountIds` in `StackingPlacement.swift`): the sync registration
+  path can't read a window title, so mounting there and then re-placing from
+  window memory moved the window twice — the visible "new window jumps across
+  the screen". Startup is exempt (one batch, `isStartup`). The restore also
+  ranks remembered lanes against the **current** layout's free lanes, never
+  back to column 0, so a newcomer can't be ranked onto an existing column.
+
 - **Spring animations.** Windows glide to their target rects via
   `WindowAnimator` (critically-damped spring, stiffness 800) rather than an
   instant `setAxFrame`. The animator drives per-frame `setAxFrame`s on a 60 fps
@@ -59,6 +73,26 @@ It is gated by the `experimental-stacking-layout` config flag, which now
 (`Sources/AppBundle/tree/TilingContainer.swift`, `layoutRecursive`/
 `layoutTiles`/`layoutAccordion`) remains only as the dormant fallback when the
 flag is off; it is not mur's model.
+
+## Installing (`just install`)
+
+`just install` builds the debug bundle, installs it as
+**`/Applications/Mur.app`** (`install-app.sh`), symlinks the CLI shipped
+*inside* that bundle to `/usr/local/bin/mur`, and restarts the daemon
+from the installed copy. So the app is launchable from Finder/Spotlight
+and the CLI keeps working if the source tree moves.
+
+`install-app.sh` assembles the bundle by hand from the SwiftPM products
+(executable + Info.plist + ad-hoc signature + an `AppIcon.icns` built
+with `sips`/`iconutil` — `actool` needs an Xcode IDE plugin host that is
+often broken); `build-release.sh` is not used because it wants a codesign
+certificate, a universal build and a clean worktree.
+
+Accessibility is per-bundle-path, so the first launch of
+`/Applications/Mur.app` **from Finder** raises a fresh "control this
+computer" prompt even if `.debug/MurApp.app` was already approved — until
+it's granted, hotkeys register but the commands they run do nothing.
+`just install` prints that reminder. `just uninstall` removes both.
 
 ## Restarting the daemon after a debug build
 
@@ -78,6 +112,21 @@ disown 2>/dev/null
 
 The subshell + `disown` detach the process from the shell so hotkey
 registration survives the launching session exiting.
+
+## Running mur as a service (crash protection)
+
+`bash install-service.sh` installs a per-user launchd agent
+(`~/Library/LaunchAgents/com.mur.MurApp.plist`) that runs the MurApp binary
+directly — never via `open`, which would break hotkey registration — with
+`KeepAlive.SuccessfulExit = false`, so launchd relaunches it after a crash
+but leaves it down after a clean quit. `--status` / `--uninstall` do what
+they say; logs go to `~/Library/Logs/mur.log`.
+
+Caveat: a launchd-launched MurApp is its own TCC client. Launching it from a
+terminal inherits that terminal's Accessibility grant, launchd does not — so
+the first service start raises the "control this computer" prompt and mur
+sees zero windows until it's approved. An ad-hoc `codesign -s -` build gets a
+new identity on every rebuild, which can require re-approving it.
 
 ## Building
 

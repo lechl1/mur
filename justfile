@@ -8,7 +8,15 @@ app    := justfile_directory() / ".debug/MurApp.app"
 binary := app / "Contents/MacOS/MurApp"
 cli    := justfile_directory() / ".debug/mur"
 
-# Where the `mur` CLI symlink is installed.
+# Where `just install` puts things. The app goes to /Applications so it
+# is launchable from Finder / Spotlight; the CLI is symlinked onto PATH
+# from *inside* the installed bundle, so it keeps working if the source
+# tree moves away.
+install_dir      := "/Applications"
+installed_app    := install_dir / "Mur.app"
+installed_binary := installed_app / "Contents/MacOS/MurApp"
+installed_cli    := installed_app / "Contents/MacOS/mur"
+
 prefix := "/usr/local"
 log    := "/tmp/mur.log"
 
@@ -31,26 +39,39 @@ default:
 build *args:
     export PATH="$(echo "$PATH" | tr ':' '\n' | grep -v '/.swiftly/' | paste -sd: -)"; unset TOOLCHAINS; bash build-debug.sh {{args}}
 
-# Build, symlink the `mur` CLI onto PATH, and (re)start the daemon.
-install: build
+# Build, install the app into /Applications, put the `mur` CLI on PATH,
+# and (re)start the daemon. Stop first: you can't overwrite the
+# executable of a running bundle.
+install: build stop
+    bash install-app.sh
     install -d "{{prefix}}/bin"
-    ln -sf "{{cli}}" "{{prefix}}/bin/mur"
-    @just restart
-    @echo "✅ Installed: {{prefix}}/bin/mur -> {{cli}}; daemon running (logs: {{log}})"
+    ln -sf "{{installed_cli}}" "{{prefix}}/bin/mur"
+    @just start
+    @echo "✅ Installed {{installed_app}} + {{prefix}}/bin/mur (logs: {{log}})"
+    @echo "   Launchable from Finder/Spotlight. First launch from there needs its own"
+    @echo "   Accessibility grant: System Settings → Privacy & Security → Accessibility → Mur."
 
-# Remove the CLI symlink and stop the daemon.
+# Remove the installed app and the CLI symlink, and stop the daemon.
 uninstall: stop
     -rm -f "{{prefix}}/bin/mur"
+    bash install-app.sh --uninstall
     @echo "🗑  Removed {{prefix}}/bin/mur"
 
-# Relaunch the daemon detached so global hotkeys register (see CLAUDE.md).
-restart: stop
-    (nohup "{{binary}}" >"{{log}}" 2>&1 &) ; disown 2>/dev/null || true
-    @echo "▶  Daemon started — logs at {{log}}"
+# Launch the daemon detached so global hotkeys register (see CLAUDE.md):
+# the installed app if there is one, otherwise the debug bundle.
+start:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    if test -x "{{installed_binary}}"; then bin="{{installed_binary}}"; else bin="{{binary}}"; fi
+    (nohup "$bin" >"{{log}}" 2>&1 &) ; disown 2>/dev/null || true
+    echo "▶  Started $bin — logs at {{log}}"
 
-# Stop the running daemon.
+# Restart the daemon.
+restart: stop start
+
+# Stop the running daemon (installed or debug — the pattern matches both).
 stop:
-    -pkill -f "MurApp.app/Contents/MacOS/MurApp"
+    -pkill -f "Mur(App)?\.app/Contents/MacOS/MurApp"
     @sleep 1
 
 # Follow the daemon log.
