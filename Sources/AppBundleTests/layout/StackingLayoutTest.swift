@@ -405,10 +405,12 @@ struct StackingLayoutTest {
         #expect(abs((r1?.topLeftX ?? 0) - 450) < 0.001)
     }
 
-    @Test func closingAColumnKeepsSurvivorsWidthNoReclaim() {
+    // MARK: a closing column gives its width to the survivors
+
+    @Test func closingAColumnFillsItsSpaceWhenShrunkToFill() {
         // 3 default (0.4) columns → total 1.2 > 1 → shrunk to fill, each
-        // renders 300 px. Close one column: the survivors must KEEP their
-        // 300 px width (re-centred), not grow to 360 px to reclaim the gap.
+        // renders 300 px. Close one: the survivors take over its space, so
+        // the strip still covers the full 900 px — 450 px each.
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
@@ -416,8 +418,67 @@ struct StackingLayoutTest {
         let before = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
         #expect(abs((before?.width ?? 0) - 300) < 0.001)  // 0.4/1.2 * 900
         layout.remove(3)
-        let after = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
-        #expect(abs((after?.width ?? 0) - 300) < 0.001)   // unchanged, not 360
+        let r0 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        let r1 = layout.resolveRect(for: 2, in: landscapeAvail, innerGap: 0)
+        #expect(abs((r0?.width ?? 0) - 450) < 0.001)
+        #expect(abs((r1?.width ?? 0) - 450) < 0.001)
+        #expect(abs((r0?.topLeftX ?? -1) - 0) < 0.001)    // still fills the screen
+        #expect(abs((r1?.topLeftX ?? -1) - 450) < 0.001)
+    }
+
+    @Test func closingAColumnFillsItsSpaceWhenCentered() {
+        // Two default (0.4) columns, total 0.8 → centred with 90 px slack on
+        // each side. Close one: the survivor absorbs the closed column's
+        // width (0.8 of the axis), and stays centred.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.remove(2)
+        let r = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        #expect(abs((r?.width ?? 0) - 720) < 0.001)       // 0.8 * 900
+        #expect(abs((r?.topLeftX ?? -1) - 90) < 0.001)    // (900 - 720)/2
+    }
+
+    @Test func closingAColumnKeepsSurvivorsProportions() {
+        // Survivors scale by one shared factor, so their sizes stay in the
+        // same ratio to each other — a wide column stays twice a narrow one.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.place(3, at: .soleSlot(lane: 2))
+        layout.setLaneAbsoluteWidth(0.2, lane: 0)
+        layout.setLaneAbsoluteWidth(0.4, lane: 1)
+        layout.setLaneAbsoluteWidth(0.2, lane: 2)
+        layout.remove(3) // frees 0.2; survivors hold 0.6 → scale by 0.8/0.6
+        let r0 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        let r1 = layout.resolveRect(for: 2, in: landscapeAvail, innerGap: 0)
+        #expect(abs((r1?.width ?? 0) - 2 * (r0?.width ?? 0)) < 0.001)
+        // Total covered is preserved: 0.8 * 900 = 720, still centred.
+        #expect(abs(((r0?.width ?? 0) + (r1?.width ?? 0)) - 720) < 0.001)
+        #expect(abs((r0?.topLeftX ?? -1) - 90) < 0.001)
+    }
+
+    @Test func closingTheOnlyColumnLeavesItsWidthAlone() {
+        // Nothing survives to hand the width to — and the next window to
+        // open should start from a sane column width, not the whole strip.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.setLaneAbsoluteWidth(1.0 / 3.0, lane: 0)
+        layout.remove(1)
+        #expect(abs(layout.laneWeight(lane: 0) - 1.0 / 3.0) < 0.001)
+    }
+
+    @Test func closingARowLeavesColumnWidthsAlone() {
+        // Only a column CLOSING redistributes. Losing one of two rows keeps
+        // the column exactly as wide as it was.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        layout.place(3, at: .soleSlot(lane: 1))
+        layout.remove(2)
+        let r0 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        #expect(abs((r0?.width ?? 0) - 360) < 0.001)      // 0.4 * 900, unchanged
+        #expect(abs(layout.laneWeight(lane: 1) - 0.4) < 0.001)
     }
 
     @Test func narrowColumnCentersPortrait() {

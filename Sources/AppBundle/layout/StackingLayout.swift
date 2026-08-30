@@ -280,16 +280,12 @@ final class StackingLayout {
     @discardableResult
     func remove(_ windowId: WindowId) -> TileSpan? {
         guard let span = placements[windowId] else { return nil }
-        // If this closes a whole COLUMN (the window is alone in its lane),
-        // freeze the surviving columns at their current on-screen widths
-        // first — otherwise, when the columns were being shrunk to fill
-        // (used total > 1), dropping one lets fit-or-center render the rest
-        // WIDER to reclaim the freed space ("columns resize to fill the
-        // gap"). With this, the survivors keep their width and just
-        // re-centre.
-        if span.lane0 == span.lane1, windows(in: span.lane0).count == 1 {
-            commitRenderedLaneWidths()
-        }
+        // A column that loses its last window hands its width to the
+        // survivors — see `redistributeWidthOfClosingLanes`. Computed
+        // BEFORE the removal, while the lane still knows it holds only
+        // this window.
+        let closing = (span.lane0 ... span.lane1).filter { windows(in: $0).count == 1 }
+        redistributeWidthOfClosingLanes(closing)
         placements.removeValue(forKey: windowId)
         zOrder.removeAll { $0 == windowId }
         for lane in span.lane0 ... span.lane1 { compactLaneIfNeeded(lane) }
@@ -297,19 +293,48 @@ final class StackingLayout {
         return span
     }
 
-    /// Rewrite every used lane's weight to its current RENDERED fraction
-    /// (`weight / max(1, usedTotal)`). A no-op unless the columns were being
-    /// shrunk to fill (used total > 1). Called before removing a column so
-    /// the survivors keep their on-screen width instead of growing to
-    /// reclaim the space the removed column freed.
-    private func commitRenderedLaneWidths() {
+    /// mur — A CLOSING COLUMN GIVES ITS WIDTH TO THE SURVIVORS.
+    ///
+    /// When the last window in a column goes away, the remaining columns
+    /// scale up **proportionally** to take over the space it occupied, so
+    /// the strip covers exactly as much of the screen after the close as
+    /// before it — no gap opens where the column used to be, and the
+    /// survivors keep their relative sizes.
+    ///
+    /// The maths is one scale factor. With used weights totalling `T` and
+    /// the closing lanes worth `c`, scaling every survivor by `T / (T - c)`
+    /// leaves the new total at `T`, and since `resolveRect` renders lane
+    /// `i` at `w_i / max(1, T)`, every survivor's rendered width grows by
+    /// exactly that factor. It works the same in both fit-or-center
+    /// regimes: a centred strip (`T ≤ 1`) stays centred and gets wider, a
+    /// shrunk-to-fill strip (`T > 1`) keeps filling the screen.
+    ///
+    /// Called before the removal, with the lanes that are about to become
+    /// empty. No-op when nothing survives (the workspace is emptying) — the
+    /// last column's weight is left alone so a re-opened window starts from
+    /// a sane width rather than inheriting the whole strip.
+    private func redistributeWidthOfClosingLanes(_ closingLanes: [Int]) {
         let used = usedLanes
-        guard !used.isEmpty else { return }
+        let closing = Set(closingLanes).intersection(used)
+        let survivors = used.filter { !closing.contains($0) }
+        guard !closing.isEmpty, !survivors.isEmpty else { return }
+
         var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
         let total = used.reduce(0.0) { $0 + weights[$1] }
-        let denom = max(1.0, total)
-        guard denom > 1 else { return }
-        for l in used { weights[l] = weights[l] / denom }
+        let survivingTotal = survivors.reduce(0.0) { $0 + weights[$1] }
+        guard survivingTotal > 0, total > survivingTotal else { return }
+
+        let scale = total / survivingTotal
+        for l in survivors { weights[l] *= scale }
+        // Renormalise once the strip is at or past full width. Rendering
+        // there depends only on the ratios (`denom = max(1, total)`), so
+        // this is invisible on screen — but without it the stored total
+        // ratchets upward over a long session of opening and closing
+        // columns, and a lone survivor would eventually be left holding a
+        // weight of several screens.
+        if total > 1 {
+            for l in survivors { weights[l] /= total }
+        }
         setLaneWeights(weights)
     }
 

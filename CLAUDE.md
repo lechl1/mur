@@ -21,7 +21,7 @@ tree like i3/sway. This is a core design invariant: keep it that way.
 - **Fit-or-center along the lane axis (naru-style, carousel disabled).**
   Lane weights are **absolute** desired widths, as a fraction of the lane-axis
   extent. The default column width is **`StackingLayout.defaultColumnWidth`
-  (0.5)** — deliberately below `1.0` so columns render at their natural width
+  (0.4)** — deliberately below `1.0` so columns render at their natural width
   and **center** instead of auto-expanding to fill (that was the whole point of
   the naru port). In `resolveRect`, if the used columns' total desired width is
   **≤ 1** the strip renders at those widths and is **centered**; if it
@@ -34,6 +34,21 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   **absolute** width from the dragged extent (`StackingResize.snap`); neighbours
   keep their widths and fit-or-center re-centers the strip, so a column grows /
   shrinks symmetrically about the centre instead of shoving one neighbour.
+- **A closing column gives its width to the survivors.** When the last
+  window in a column goes away, the remaining columns scale up
+  **proportionally** to cover the space it occupied, so the strip covers as
+  much of the screen after the close as before — no gap opens where the
+  column was, and the survivors keep their relative sizes.
+  `StackingLayout.redistributeWidthOfClosingLanes` does it with one factor:
+  with used weights totalling `T` and the closing lanes worth `c`, every
+  survivor scales by `T / (T - c)`, which leaves the total at `T` and so
+  grows each rendered width by exactly that factor in both fit-or-center
+  regimes. Above full width the weights are renormalised (invisible on
+  screen, since rendering only uses the ratios there) so the stored total
+  can't ratchet up over a long session. Losing one ROW of a multi-row column
+  changes nothing — only a column closing redistributes. This deliberately
+  reverses the older "survivors keep their on-screen width" behaviour.
+
 - **No empty columns.** A lane only exists while a window can actually
   render in it. `layoutWorkspaceWithStacking` prunes cells whose window is
   gone, has moved workspace, or sits in a macOS-native shim container
