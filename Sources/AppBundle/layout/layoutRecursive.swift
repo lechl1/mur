@@ -20,6 +20,30 @@ extension Workspace {
         try await layoutRecursive(rect.topLeftCorner, width: rect.width, height: rect.height - 1, virtual: rect, LayoutContext(self))
     }
 
+    /// mur — drop cells whose window can no longer render in them, so no
+    /// column is left standing empty.
+    ///
+    /// A cell survives only while its window still exists, still belongs to
+    /// THIS workspace, and is in standard layout (not parked in one of the
+    /// macOS-native shim containers: minimized / fullscreen / hidden app).
+    /// Anything else reserves a lane that draws as an empty column — a
+    /// window that died while its workspace was hidden, one moved away by a
+    /// path that didn't clean up, or one whose native state changed between
+    /// refreshes. `remove()` runs `compactGaps()`, so the survivors close
+    /// ranks and the strip re-centres.
+    @MainActor
+    fileprivate func pruneStackingLayout() {
+        for windowId in Array(stackingLayout.placements.keys) {
+            guard let window = Window.get(byId: windowId) else {
+                _ = stackingLayout.remove(windowId)
+                continue
+            }
+            if window.nodeWorkspace !== self || window.layoutReason != .standard {
+                _ = stackingLayout.remove(windowId)
+            }
+        }
+    }
+
     /// mur — phase 1.3 stacking-based layout dispatch.
     ///
     /// Walks `stackingLayout.zOrder` back→front and `setAxFrame`s each tiled
@@ -34,6 +58,7 @@ extension Workspace {
     @MainActor
     fileprivate func layoutWorkspaceWithStacking() async throws {
         let context = LayoutContext(self)
+        pruneStackingLayout()
         let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
         // Reshape if monitor orientation has changed since last layout.
         let mon = rect

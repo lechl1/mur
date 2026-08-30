@@ -34,6 +34,16 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   **absolute** width from the dragged extent (`StackingResize.snap`); neighbours
   keep their widths and fit-or-center re-centers the strip, so a column grows /
   shrinks symmetrically about the centre instead of shoving one neighbour.
+- **No empty columns.** A lane only exists while a window can actually
+  render in it. `layoutWorkspaceWithStacking` prunes cells whose window is
+  gone, has moved workspace, or sits in a macOS-native shim container
+  (minimized / fullscreen / hidden app) before resolving geometry, and
+  `remove()`'s `compactGaps()` closes ranks. On top of that, a *tiled*
+  window minimized behind mur's back (⌘M, or an app minimizing itself) is
+  auto-restored by `normalizeLayoutReason` so its column never goes empty
+  — mur gives up after `autoUnminimizeGiveUpAfter` (2s) if the app insists.
+  An explicit `macos-native-minimize` opts out (it records the window in
+  `intentionallyMinimizedWindowIds`) and frees the cell instead.
 - **Spring animations.** Windows glide to their target rects via
   `WindowAnimator` (critically-damped spring, stiffness 800) rather than an
   instant `setAxFrame`. The animator drives per-frame `setAxFrame`s on a 60 fps

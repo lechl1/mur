@@ -22,6 +22,7 @@ public enum CmdKind: String, CaseIterable, Equatable, Sendable {
     case stackingMove = "stacking-move"     // mur — phase 2
     case stackingPlace = "stacking-place"   // mur — phase 2
     case stackingResize = "stacking-resize" // mur — phase 2
+    case stackingResizeLane = "stacking-resize-lane" // mur — explicit grow/shrink of the lane axis
     case joinWith = "join-with"
     case layout
     case listApps = "list-apps"
@@ -97,6 +98,8 @@ func initSubcommands() -> [String: any SubCommandParserProtocol] {
                 result[kind.rawValue] = SubCommandParser(parseStackingPlaceCmdArgs)
             case .stackingResize:
                 result[kind.rawValue] = SubCommandParser(StackingResizeCmdArgs.init)
+            case .stackingResizeLane:
+                result[kind.rawValue] = SubCommandParser(StackingResizeLaneCmdArgs.init)
             case .joinWith:
                 result[kind.rawValue] = SubCommandParser(JoinWithCmdArgs.init)
             case .layout:

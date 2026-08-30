@@ -72,6 +72,10 @@ func parseCardinalDirectionArg(i: PosArgParserInput) -> ParsedCliArgs<CardinalDi
     .init(parseEnum(i.arg, CardinalDirection.self), advanceBy: 1)
 }
 
+func parseStackingSizeDeltaArg(i: PosArgParserInput) -> ParsedCliArgs<StackingSizeDelta> {
+    .init(parseEnum(i.arg, StackingSizeDelta.self), advanceBy: 1)
+}
+
 func parseCardinalOrDfsDirection(i: PosArgParserInput) -> ParsedCliArgs<CardinalOrDfsDirection> {
     .init(parseEnum(i.arg, CardinalOrDfsDirection.self), advanceBy: 1)
 }

@@ -46,6 +46,8 @@ extension CmdArgs {
                 command = StackingPlaceCommand(args: self as! StackingPlaceCmdArgs)
             case .stackingResize:
                 command = StackingResizeCommand(args: self as! StackingResizeCmdArgs)
+            case .stackingResizeLane:
+                command = StackingResizeLaneCommand(args: self as! StackingResizeLaneCmdArgs)
             case .joinWith:
                 command = JoinWithCommand(args: self as! JoinWithCmdArgs)
             case .layout:

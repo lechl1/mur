@@ -42,7 +42,7 @@ extension HotKey {
         // ramping the alternation / chained extract → shrink. Other
         // commands fire once per press.
         let isRepeatable = binding.commands.contains {
-            $0 is StackingMoveCommand || $0 is StackingResizeCommand
+            $0 is StackingMoveCommand || $0 is StackingResizeCommand || $0 is StackingResizeLaneCommand
         }
         let bindingKey = binding.descriptionWithKeyCode
         let fire: @MainActor () -> Void = {

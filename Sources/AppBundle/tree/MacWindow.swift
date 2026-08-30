@@ -95,6 +95,7 @@ final class MacWindow: Window {
                 _ = workspace.stackingLayout.remove(windowId)
             }
         }
+        forgetMinimizeState(of: windowId)
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace

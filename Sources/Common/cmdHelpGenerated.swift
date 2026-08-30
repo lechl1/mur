@@ -78,6 +78,9 @@ let stacking_place_help_generated = """
 let stacking_resize_help_generated = """
     USAGE: stacking-resize [-h|--help] [--window-id <window-id>] (left|down|up|right)
     """
+let stacking_resize_lane_help_generated = """
+    USAGE: stacking-resize-lane [-h|--help] [--window-id <window-id>] (grow|shrink)
+    """
 let join_with_help_generated = """
     USAGE: join-with [-h|--help] [--window-id <window-id>] (left|down|up|right)
     """
