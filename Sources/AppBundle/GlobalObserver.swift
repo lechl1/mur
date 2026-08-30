@@ -84,7 +84,10 @@ enum GlobalObserver {
                     // sessions) the same way a keyboard move does.
                     persistWindowStateSoon()
                 }
-                try await resetManipulatedWithMouseIfPossible()
+                // mur — `try?`, not `try`: this used to be able to throw
+                // past everything below it, including the refresh that
+                // snaps a just-dragged window back into its cell.
+                try? await resetManipulatedWithMouseIfPossible()
                 let mouseLocation = mouseLocation
                 let clickedMonitor = mouseLocation.monitorApproximation
                 switch true {

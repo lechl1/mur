@@ -13,7 +13,17 @@ func movedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableR
         if let windowId, WindowAnimator.shared.isDrivingFrame(windowId) { return }
         // mur — self-heal stuck manipulation state when the button is up.
         if !isLeftMouseButtonDown { try? await resetManipulatedWithMouseIfPossible() }
-        guard let windowId, let window = Window.get(byId: windowId), try await isManipulatedWithMouse(window) else {
+        let window = windowId.flatMap { Window.get(byId: $0) }
+        // mur — THE REFRESH MUST HAPPEN EVEN IF THE CHECK FAILS. This used
+        // to read `try await isManipulatedWithMouse(window)` inside the
+        // guard's condition: when one of its AX reads threw — a slow app, a
+        // cancelled session — the whole closure unwound before reaching the
+        // `else`, so no refresh was scheduled and the window was simply
+        // left wherever it had been dragged to. `try?` turns a failed check
+        // into "not a mouse drag", which schedules the refresh that snaps
+        // the window back into its cell.
+        let manipulated = if let window { (try? await isManipulatedWithMouse(window)) ?? false } else { false }
+        guard let windowId, let window, manipulated else {
             scheduleCancellableCompleteRefreshSession(.ax(notif))
             return
         }

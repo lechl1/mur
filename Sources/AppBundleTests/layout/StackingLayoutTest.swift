@@ -426,17 +426,18 @@ struct StackingLayoutTest {
         #expect(abs((r1?.topLeftX ?? -1) - 450) < 0.001)
     }
 
-    @Test func closingAColumnFillsItsSpaceWhenCentered() {
-        // Two default (0.4) columns, total 0.8 → centred with 90 px slack on
-        // each side. Close one: the survivor absorbs the closed column's
-        // width (0.8 of the axis), and stays centred.
+    @Test func closingAColumnFillsTheScreenFromACentredStrip() {
+        // Two default (0.4) columns, total 0.8 → centred with 90 px of slack
+        // on each side. Close one and the survivor takes the WHOLE axis: a
+        // close is the one moment where leaving the screen part-empty reads
+        // as mur failing to react rather than as fit-or-center.
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
         layout.remove(2)
         let r = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
-        #expect(abs((r?.width ?? 0) - 720) < 0.001)       // 0.8 * 900
-        #expect(abs((r?.topLeftX ?? -1) - 90) < 0.001)    // (900 - 720)/2
+        #expect(abs((r?.width ?? 0) - 900) < 0.001)       // full width
+        #expect(abs((r?.topLeftX ?? -1) - 0) < 0.001)     // flush left, no slack
     }
 
     @Test func closingAColumnKeepsSurvivorsProportions() {
@@ -449,13 +450,14 @@ struct StackingLayoutTest {
         layout.setLaneAbsoluteWidth(0.2, lane: 0)
         layout.setLaneAbsoluteWidth(0.4, lane: 1)
         layout.setLaneAbsoluteWidth(0.2, lane: 2)
-        layout.remove(3) // frees 0.2; survivors hold 0.6 → scale by 0.8/0.6
+        layout.remove(3) // frees 0.2; survivors hold 0.6, normalised to 1
         let r0 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
         let r1 = layout.resolveRect(for: 2, in: landscapeAvail, innerGap: 0)
+        // Proportions survive — the wide column is still twice the narrow —
+        // and together they cover the axis.
         #expect(abs((r1?.width ?? 0) - 2 * (r0?.width ?? 0)) < 0.001)
-        // Total covered is preserved: 0.8 * 900 = 720, still centred.
-        #expect(abs(((r0?.width ?? 0) + (r1?.width ?? 0)) - 720) < 0.001)
-        #expect(abs((r0?.topLeftX ?? -1) - 90) < 0.001)
+        #expect(abs(((r0?.width ?? 0) + (r1?.width ?? 0)) - 900) < 0.001)
+        #expect(abs((r0?.topLeftX ?? -1) - 0) < 0.001)
     }
 
     @Test func closingTheOnlyColumnLeavesItsWidthAlone() {

@@ -34,20 +34,23 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   **absolute** width from the dragged extent (`StackingResize.snap`); neighbours
   keep their widths and fit-or-center re-centers the strip, so a column grows /
   shrinks symmetrically about the centre instead of shoving one neighbour.
-- **A closing column gives its width to the survivors.** When the last
-  window in a column goes away, the remaining columns scale up
-  **proportionally** to cover the space it occupied, so the strip covers as
-  much of the screen after the close as before — no gap opens where the
-  column was, and the survivors keep their relative sizes.
-  `StackingLayout.redistributeWidthOfClosingLanes` does it with one factor:
-  with used weights totalling `T` and the closing lanes worth `c`, every
-  survivor scales by `T / (T - c)`, which leaves the total at `T` and so
-  grows each rendered width by exactly that factor in both fit-or-center
-  regimes. Above full width the weights are renormalised (invisible on
-  screen, since rendering only uses the ratios there) so the stored total
-  can't ratchet up over a long session. Losing one ROW of a multi-row column
-  changes nothing — only a column closing redistributes. This deliberately
-  reverses the older "survivors keep their on-screen width" behaviour.
+- **A closing column's space goes back to the survivors, which then FILL
+  the screen.** When the last window in a column goes away, the remaining
+  columns scale up **proportionally** until they cover the whole lane axis:
+  no gap where the column was, and no slack at the edges either. They keep
+  their sizes relative to each other, so a column that was twice its
+  neighbour still is. `StackingLayout.redistributeWidthOfClosingLanes`
+  normalises the surviving weights to sum to exactly 1 — `resolveRect`
+  renders lane `i` at `w_i / max(1, total)`, so a total of 1 spans edge to
+  edge. That also keeps the stored total from ratcheting up over a long
+  session, since every close lands back on 1.
+  This deliberately overrides fit-or-center **on close**: opening columns
+  still centres a narrow strip (the naru feel, and it stays), but leaving
+  the screen part-empty after a close reads as mur failing to react. Two
+  earlier rules were both wrong here — "survivors keep their on-screen
+  width", then "survivors preserve the total" (which left a 0.4-wide strip
+  0.4 wide, the visible bug). Losing one ROW of a multi-row column still
+  changes nothing: only a column closing redistributes.
 
 - **No empty columns.** A lane only exists while a window can actually
   render in it. `layoutWorkspaceWithStacking` prunes cells whose window is

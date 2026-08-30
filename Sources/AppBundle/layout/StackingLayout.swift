@@ -293,21 +293,24 @@ final class StackingLayout {
         return span
     }
 
-    /// mur — A CLOSING COLUMN GIVES ITS WIDTH TO THE SURVIVORS.
+    /// mur — A CLOSING COLUMN'S SPACE GOES BACK TO THE SURVIVORS, WHICH
+    /// THEN FILL THE SCREEN.
     ///
     /// When the last window in a column goes away, the remaining columns
-    /// scale up **proportionally** to take over the space it occupied, so
-    /// the strip covers exactly as much of the screen after the close as
-    /// before it — no gap opens where the column used to be, and the
-    /// survivors keep their relative sizes.
+    /// scale up **proportionally** until they cover the whole lane axis:
+    /// no gap where the column was, and no slack at the edges either. They
+    /// keep their sizes relative to each other, so a column that was twice
+    /// its neighbour still is.
     ///
-    /// The maths is one scale factor. With used weights totalling `T` and
-    /// the closing lanes worth `c`, scaling every survivor by `T / (T - c)`
-    /// leaves the new total at `T`, and since `resolveRect` renders lane
-    /// `i` at `w_i / max(1, T)`, every survivor's rendered width grows by
-    /// exactly that factor. It works the same in both fit-or-center
-    /// regimes: a centred strip (`T ≤ 1`) stays centred and gets wider, a
-    /// shrunk-to-fill strip (`T > 1`) keeps filling the screen.
+    /// One scale factor does it: normalise the surviving weights so they
+    /// sum to exactly 1. `resolveRect` renders lane `i` at
+    /// `w_i / max(1, total)`, so a total of 1 means the strip starts at the
+    /// left edge and ends at the right one.
+    ///
+    /// This deliberately overrides fit-or-center ON CLOSE. Opening columns
+    /// still centres a narrow strip — that is the naru feel and it stays —
+    /// but a close is the one moment where leaving the screen part-empty
+    /// reads as mur failing to react rather than as a layout choice.
     ///
     /// Called before the removal, with the lanes that are about to become
     /// empty. No-op when nothing survives (the workspace is emptying) — the
@@ -320,21 +323,14 @@ final class StackingLayout {
         guard !closing.isEmpty, !survivors.isEmpty else { return }
 
         var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
-        let total = used.reduce(0.0) { $0 + weights[$1] }
         let survivingTotal = survivors.reduce(0.0) { $0 + weights[$1] }
-        guard survivingTotal > 0, total > survivingTotal else { return }
+        guard survivingTotal > 0 else { return }
 
-        let scale = total / survivingTotal
-        for l in survivors { weights[l] *= scale }
-        // Renormalise once the strip is at or past full width. Rendering
-        // there depends only on the ratios (`denom = max(1, total)`), so
-        // this is invisible on screen — but without it the stored total
-        // ratchets upward over a long session of opening and closing
-        // columns, and a lone survivor would eventually be left holding a
-        // weight of several screens.
-        if total > 1 {
-            for l in survivors { weights[l] /= total }
-        }
+        // Normalise to exactly 1: survivors keep their proportions and
+        // together cover the axis. This also stops the stored total from
+        // ratcheting upward over a long session of opening and closing
+        // columns, since every close lands back on 1.
+        for l in survivors { weights[l] /= survivingTotal }
         setLaneWeights(weights)
     }
 
