@@ -48,7 +48,7 @@ struct StackingResizeTest {
         #expect(lw.count == 6)
         #expect(abs(lw[0] - 0.6667) < 0.01)   // 600 / 900
         #expect(abs(lw[1] - 0.4) < 0.01)      // snapshot of its rendered width
-        for unused in 2..<6 { #expect(abs(lw[unused] - 0.4) < 0.01) }
+        for unused in 2 ..< 6 { #expect(abs(lw[unused] - 0.4) < 0.01) }
         #expect(result?.slotLane == nil)
     }
 
@@ -134,7 +134,7 @@ struct StackingResizeTest {
         #expect(abs(lw[0] - 0.5) < 0.01)      // 450 / 900
         #expect(abs(lw[1] - 0.3333) < 0.01)   // snapshot of rendered 300 px
         #expect(abs(lw[2] - 0.3333) < 0.01)
-        for unused in 3..<6 { #expect(abs(lw[unused] - 0.4) < 0.01) }
+        for unused in 3 ..< 6 { #expect(abs(lw[unused] - 0.4) < 0.01) }
     }
 
     // MARK: jitter and edge cases

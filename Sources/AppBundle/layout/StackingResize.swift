@@ -115,7 +115,7 @@ enum StackingResize {
             let slots = sample.layout.slotCount(in: lane)
             if slots > 1 {
                 var weights: [CGFloat] = []
-                for s in 0..<slots { weights.append(sample.layout.slotWeight(lane: lane, slot: s)) }
+                for s in 0 ..< slots { weights.append(sample.layout.slotWeight(lane: lane, slot: s)) }
                 let total = weights.reduce(0, +)
                 let usable = slotAxisExtent - max(0, CGFloat(slots - 1)) * sample.innerGap
                 if total > 0 && usable > 0 {
@@ -151,7 +151,7 @@ enum StackingResize {
             // center re-centres the strip afterwards.
             let usable = laneAxisExtent - max(0, CGFloat(used.count - 1)) * sample.innerGap
             if usable > 0 {
-                var weights: [CGFloat] = (0..<sample.layout.shape.lanes)
+                var weights: [CGFloat] = (0 ..< sample.layout.shape.lanes)
                     .map { sample.layout.laneWeight(lane: $0) }
                 // Snapshot used lanes as their current rendered fractions
                 // so non-dragged columns keep their on-screen width.
@@ -164,7 +164,7 @@ enum StackingResize {
                     ? sample.currentRect.width : sample.currentRect.height
                 let laneCount = CGFloat(span.lane1 - span.lane0 + 1)
                 let perLane = max(0.05, (newExtent / usable) / laneCount)
-                for l in span.lane0...span.lane1 { weights[l] = perLane }
+                for l in span.lane0 ... span.lane1 { weights[l] = perLane }
                 resultLaneWeights = weights
             }
         }
@@ -191,7 +191,5 @@ enum StackingResize {
     }
 }
 
-/// Floating windows keep AeroSpace's free-form pixel resize (the existing
-/// `Window.lastFloatingSize` path is unchanged). This enum exists for
-/// documentation/grouping only.
-enum FloatingResize {}
+// NB: floating windows keep AeroSpace's free-form pixel resize — the
+// `Window.lastFloatingSize` path above is unchanged.

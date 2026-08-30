@@ -7,7 +7,7 @@ private var resizeWithMouseTask: Task<(), any Error>? = nil
 func resizedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
     let notif = notif as String
     let windowId = ax.containingWindowId()
-    Task { @MainActor in
+    fireAndForget { @MainActor in
         guard let token: RunSessionGuard = .isServerEnabled else { return }
         // mur — our own animation frames fire resize notifications; ignore
         // them so the animator doesn't trigger a refresh storm.

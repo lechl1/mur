@@ -23,13 +23,6 @@ public struct StackingPlaceCmdArgs: CmdArgs {
     public var lane:  Lateinit<Int> = .uninitialized
     public var slot0: Lateinit<Int> = .uninitialized
     public var slot1: Lateinit<Int> = .uninitialized
-
-    public init(rawArgs: [String], lane: Int, slot0: Int, slot1: Int) {
-        self.commonState = .init(rawArgs.slice)
-        self.lane = .initialized(lane)
-        self.slot0 = .initialized(slot0)
-        self.slot1 = .initialized(slot1)
-    }
 }
 
 public func parseStackingPlaceCmdArgs(_ args: StrArrSlice) -> ParsedCmd<StackingPlaceCmdArgs> {

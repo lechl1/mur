@@ -33,7 +33,7 @@ struct MessageView: View {
         self._model = .init(wrappedValue: model)
     }
 
-    public var body: some View {
+    var body: some View {
         VStack(alignment: .leading) {
             HStack(alignment: .center) {
                 Image(systemName: "exclamationmark.triangle.fill")

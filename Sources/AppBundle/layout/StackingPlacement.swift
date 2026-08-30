@@ -278,12 +278,12 @@ private func runCoordinatedRestore() async {
         && Date.now < (restoreModeDeadline ?? .distantPast)
 
     struct Tiled { let window: Window; let workspace: Workspace; let lane: Int; let slot: Int }
-    /// Remembered cells still up for grabs, per app — see the fallback below.
+    // Remembered cells still up for grabs, per app — see the fallback below.
     var appSpanPool: [String: [StoredWindowState]] = [:]
     var tiled: [Tiled] = []
     var floaters: [(window: Window, workspace: Workspace)] = []
-    /// Synthetic lanes for windows sent to their app's workspace without a
-    /// remembered cell: high enough to rank after every real lane.
+    // Synthetic lanes for windows sent to their app's workspace without a
+    // remembered cell: high enough to rank after every real lane.
     let unrankedLaneBase = Int.max - 1000
     var unrankedCount = 0
 
@@ -419,7 +419,7 @@ private func runCoordinatedRestore() async {
         var taken = Set(layout.usedLanes)
         var laneRank: [Int: Int] = [:]
         for lane in Set(group.map { $0.lane }).sorted() {
-            var column = (0..<layout.shape.lanes).first { !taken.contains($0) }
+            var column = (0 ..< layout.shape.lanes).first { !taken.contains($0) }
             if column == nil { column = layout.appendLane() }
             taken.insert(column!)
             laneRank[lane] = column!

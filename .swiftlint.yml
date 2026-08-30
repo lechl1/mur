@@ -3,50 +3,86 @@ excluded:
   - .xcode-build
   - ./ShellParserGenerated
 
+# mur — THIS LINTER LOOKS FOR BUGS, NOT FOR TASTE.
+#
+# Every rule below flags something that can actually misbehave at runtime:
+# a swallowed error, a leaked observer, a dead notification, a comparison
+# that is always true, a test that silently never runs. Nothing here is
+# about spacing, ordering, naming or line width — formatting is SwiftFormat's
+# job (`./format.sh`), and it rewrites the code instead of nagging about it.
+#
+# The bar for adding a rule: it must name a defect, and a violation of it
+# must be worth stopping the build for (`strict: true` below turns every
+# warning into an error). If a rule is only "we'd rather write it the other
+# way", it does not belong in this file.
+#
 # https://realm.github.io/SwiftLint/rule-directory.html
 only_rules:
-  # - line_length # todo fix it
-  - colon
-  - computed_accessors_order
-  - dynamic_inline # Avoid using ‘dynamic’ and ‘@inline(__always)’ together
-  - empty_enum_arguments
-  - empty_parameters # Prefer () -> over Void ->
-  - empty_string # Prefer checking isEmpty over comparing string to an empty string literal
-  - file_name_no_space
-  - first_where
-  - implicit_getter
-  - is_disjoint
-  - last_where # Prefer using .last(where:) over .filter { }.last in collections
-  - legacy_constant
-  - legacy_constructor # Swift constructors are preferred over legacy convenience functions
-  - legacy_hashing # Prefer using the hash(into:) function instead of overriding hashValue
-  - legacy_nsgeometry_functions # Struct extension properties and methods are preferred over legacy functions
-  - legacy_random # Prefer using type.random(in:) over legacy functions
-  - local_doc_comment # Prefer regular comments over doc comments in local scopes
+  # --- Silently wrong control flow -----------------------------------------
+  - duplicate_conditions # Two branches with the same condition: the second is dead
+  - duplicate_enum_cases
+  - duplicated_key_in_dictionary_literal # Later key silently wins
+  - identical_operands # `x == x` — always true; the comparison meant something else
   - no_fallthrough_only
-  - no_space_in_method_call
-  - nsobject_prefer_isequal # NSObject subclasses should implement isEqual instead of ==
-  - function_name_whitespace
-  - optional_enum_case_matching
-  - redundant_discardable_let
-  - redundant_nil_coalescing # nil coalescing operator is only evaluated if the lhs is nil, coalescing operator with nil as rhs is redundant
-  - switch_case_alignment
-  - toggle_bool
-  - trailing_newline
-  - trailing_semicolon # Lines should not have trailing semicolons
-  - trailing_whitespace # Lines should not have trailing whitespace
-  - unavailable_condition # Use #unavailable/#available instead of #available/#unavailable with an empty body.
-  - unneeded_break_in_switch # Avoid using unneeded break statements
-  - unneeded_override # Remove overridden functions that don’t do anything except call their super
-  # - unused_closure_parameter
-  - unused_control_flow_label
-  - unused_enumerated # When the index or the item is not used, .enumerated() can be removed.
-  - unused_optional_binding # Prefer != nil over let _ =
-  - unused_setter_value
-  - weak_delegate # Delegates should be weak to avoid reference cycles
+  - return_value_from_void_function # The value is discarded, not returned
+  - unavailable_condition # #available with an empty body inverts the check
+  - unused_control_flow_label # `break outer` that doesn't break the outer loop
+  - unused_setter_value # A setter that ignores `newValue` silently does nothing
 
-switch_case_alignment:
-  indented_cases: true
+  # --- Concurrency & lifetime ----------------------------------------------
+  - unhandled_throwing_task # `Task { try … }` parks the error where nobody reads it
+  - unowned_variable_capture # `unowned` outlives its referent → crash
+  - weak_delegate # A strong delegate is a retain cycle
+  - discarded_notification_center_observer # Dropped token = unremovable registration
+  - notification_center_detachment # Removing the wrong observer
+  - self_in_property_initialization # `self` before it exists
+  - block_based_kvo
+  - class_delegate_protocol # A struct delegate can't be weak
 
+  # --- Wrong API for the job ------------------------------------------------
+  - compiler_protocol_init # Initializers the compiler reserves for literals
+  - discouraged_direct_init # e.g. `UIDevice()` — never the instance you want
+  - dynamic_inline # `dynamic` + `@inline(__always)` is undefined behaviour
+  - force_try # `try!` crashes the process on a thrown error
+  - ns_number_init_as_function_reference
+  - nsobject_prefer_isequal # `==` on NSObject subclasses isn't what gets called
+  - non_optional_string_data_conversion # The failable path hides that it can't fail
+  - raw_value_for_camel_cased_codable_enum # Encodes/decodes a different string than you think
+  - deployment_target # @available checks below the deployment target are dead code
+
+  # --- Declarations that don't do what they look like ------------------------
+  - lower_acl_than_parent # `public` inside an internal type grants nothing
+  - private_swiftui_state # Non-private @State is settable from outside, honoured only once
+  - overridden_super_call
+  - prohibited_super_call
+  - local_doc_comment # A doc comment in a local scope documents nothing
+  - orphaned_doc_comment # A doc comment attached to nothing
+
+  # --- Tests that don't run --------------------------------------------------
+  - private_unit_test # A private XCTestCase method is never executed
+  - test_case_accessibility
+  - empty_xctest_method
+
+  # --- The linter itself -----------------------------------------------------
+  - invalid_swiftlint_command
+  - superfluous_disable_command # A disable for a rule that isn't firing
+
+# Deliberately NOT enabled, with reasons — don't re-add without one:
+#   force_cast / force_unwrapping   — crash-safety style, not defect detection.
+#                                     ~100 sites inherited from AeroSpace, most
+#                                     provably safe; each "fix" is a behaviour
+#                                     decision, not a mechanical edit.
+#   implicitly_unwrapped_optional   — production code has zero; the only users
+#                                     are XCTest scaffolding, where the IUO is
+#                                     the idiom.
+#   async_without_await             — has no protocol awareness, so it flags
+#                                     conformances that MUST be `async`.
+#   optional_data_string_conversion — wants the failable Data->String init; mur
+#                                     decodes a bounded head of a transcript
+#                                     that IS cut mid-codepoint, where the
+#                                     failable init would return nil.
+#   unused_parameter, comment_spacing, unneeded_override, mark, and every
+#   style/idiomatic/metrics rule    — aesthetics. SwiftFormat's job.
+
+# Warnings are errors. A bug-only rule set has no violations worth ignoring.
 strict: true
-# quiet: true

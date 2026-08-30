@@ -43,8 +43,8 @@ struct StackingResizeLaneCommand: Command {
                 windowMemory.remember(appId: appId, title: title, workspace: workspace.name, shape: layout.shape, span: span)
                 windowMemory.save()
                 persistWindowStateSoon()
-            // Siblings' slots shift with a move/resize too — sweep the layout.
-            persistWindowStateSoon()
+                // Siblings' slots shift with a move/resize too — sweep the layout.
+                persistWindowStateSoon()
             }
             return .succ
         }

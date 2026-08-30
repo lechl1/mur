@@ -32,8 +32,6 @@ struct LayoutShape: Equatable, Hashable, Codable {
 
     static let landscapeDefault = LayoutShape(orientation: .landscape, lanes: 6)
     static let portraitDefault  = LayoutShape(orientation: .portrait,  lanes: 6)
-
-    var middleLane: Int { lanes / 2 }
 }
 
 // MARK: - TileSpan
@@ -77,8 +75,6 @@ struct TileSpan: Equatable, Hashable {
         TileSpan(lane0: lane, lane1: lane, slot0: 0, slot1: 0)
     }
 
-    /// Number of slots covered along the slot axis.
-    var slotCount: Int { slot1 - slot0 + 1 }
     /// Number of lanes covered along the lane axis.
     var laneCount: Int { lane1 - lane0 + 1 }
     /// True iff this span covers a single lane.
@@ -141,7 +137,7 @@ final class StackingLayout {
         }
         // Snapshot OLD state for the lane-axis remembered-size rebalance.
         let oldUsedLanes = Set(usedLanes)
-        let oldLaneWeightsByIdx: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        let oldLaneWeightsByIdx: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
         let oldUsedSum = oldUsedLanes.reduce(0.0) { $0 + oldLaneWeightsByIdx[$1] }
         let oldSpan = placements[windowId]
         let oldFocusedLaneWeight: CGFloat? = oldSpan.map { oldLaneWeightsByIdx[$0.lane0] }
@@ -172,11 +168,11 @@ final class StackingLayout {
             }
         }
         placements[windowId] = requested
-        for lane in requested.lane0...requested.lane1 {
+        for lane in requested.lane0 ... requested.lane1 {
             ensureSlotWeightsCapacity(lane: lane, upTo: requested.slot1)
         }
         if let old = oldSpan {
-            for lane in old.lane0...old.lane1 where lane < requested.lane0 || lane > requested.lane1 {
+            for lane in old.lane0 ... old.lane1 where lane < requested.lane0 || lane > requested.lane1 {
                 compactLaneIfNeeded(lane)
             }
         }
@@ -208,7 +204,7 @@ final class StackingLayout {
     func normalizeWeights() {
         let used = usedLanes
         if used.count >= 2 {
-            var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+            var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
             let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
             if usedTotal > 0 {
                 let minPer = usedTotal / 16
@@ -221,11 +217,11 @@ final class StackingLayout {
         for lane in used {
             let slots = slotCount(in: lane)
             guard slots >= 2 else { continue }
-            var w: [CGFloat] = (0..<slots).map { slotWeight(lane: lane, slot: $0) }
+            var w: [CGFloat] = (0 ..< slots).map { slotWeight(lane: lane, slot: $0) }
             let total = w.reduce(0, +)
             guard total > 0 else { continue }
             let minPer = total / 16
-            applyFloor(&w, indices: Array(0..<slots), minPer: minPer)
+            applyFloor(&w, indices: Array(0 ..< slots), minPer: minPer)
             if w.allSatisfy({ $0 > 0 }) {
                 setSlotWeights(lane: lane, weights: w)
             }
@@ -253,12 +249,12 @@ final class StackingLayout {
         guard 0 <= lane, lane < shape.lanes else { return }
         let slots = slotCount(in: lane)
         guard slots >= 2, 0 <= newSlotIdx, newSlotIdx < slots else { return }
-        var weights: [CGFloat] = (0..<slots).map { slotWeight(lane: lane, slot: $0) }
-        let othersOldSum = (0..<slots).filter { $0 != newSlotIdx }.reduce(0.0) { $0 + weights[$1] }
+        var weights: [CGFloat] = (0 ..< slots).map { slotWeight(lane: lane, slot: $0) }
+        let othersOldSum = (0 ..< slots).filter { $0 != newSlotIdx }.reduce(0.0) { $0 + weights[$1] }
         guard othersOldSum > 0 else { return }
         let n = CGFloat(slots)
         weights[newSlotIdx] = 1.0
-        for s in 0..<slots where s != newSlotIdx {
+        for s in 0 ..< slots where s != newSlotIdx {
             weights[s] = weights[s] * (n - 1) / othersOldSum
         }
         setSlotWeights(lane: lane, weights: weights)
@@ -275,7 +271,7 @@ final class StackingLayout {
     /// "columns keep shrinking when moving windows around".
     private func rebalanceForNewLaneRemembering(_ newLaneIdx: Int, oldFocusedWeight w: CGFloat) {
         guard 0 <= newLaneIdx, newLaneIdx < shape.lanes, w > 0 else { return }
-        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
         weights[newLaneIdx] = w
         setLaneWeights(weights)
     }
@@ -296,7 +292,7 @@ final class StackingLayout {
         }
         placements.removeValue(forKey: windowId)
         zOrder.removeAll { $0 == windowId }
-        for lane in span.lane0...span.lane1 { compactLaneIfNeeded(lane) }
+        for lane in span.lane0 ... span.lane1 { compactLaneIfNeeded(lane) }
         compactGaps()
         return span
     }
@@ -309,7 +305,7 @@ final class StackingLayout {
     private func commitRenderedLaneWidths() {
         let used = usedLanes
         guard !used.isEmpty else { return }
-        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
         let total = used.reduce(0.0) { $0 + weights[$1] }
         let denom = max(1.0, total)
         guard denom > 1 else { return }
@@ -340,7 +336,7 @@ final class StackingLayout {
         for (newL, oldL) in oldUsed.enumerated() {
             var usedSlots = Set<Int>()
             for span in placements.values where span.lane0 <= oldL && oldL <= span.lane1 {
-                for s in span.slot0...span.slot1 { usedSlots.insert(s) }
+                for s in span.slot0 ... span.slot1 { usedSlots.insert(s) }
             }
             let sorted = usedSlots.sorted()
             var sm: [Int: Int] = [:]
@@ -406,7 +402,7 @@ final class StackingLayout {
         placements = newPlacements
         // Swap lane weights.
         var weights: [CGFloat] = []
-        for l in 0..<shape.lanes { weights.append(laneWeight(lane: l)) }
+        for l in 0 ..< shape.lanes { weights.append(laneWeight(lane: l)) }
         weights.swapAt(laneA, laneB)
         _laneWeights = weights
         // Swap per-lane slot weights so each column keeps its own row partition.
@@ -496,7 +492,7 @@ final class StackingLayout {
         let slots = slotCount(in: lane)
         if slots == 0 { return 0 }
         var weights: [CGFloat] = []
-        for s in 0..<slots { weights.append(slotWeight(lane: lane, slot: s)) }
+        for s in 0 ..< slots { weights.append(slotWeight(lane: lane, slot: s)) }
         let total = weights.reduce(0, +)
         guard total > 0 else { return 0 }
         let landscape = shape.orientation == .landscape
@@ -505,7 +501,7 @@ final class StackingLayout {
         let extent = landscape ? available.height : available.width
         let usable = extent - max(0, CGFloat(slots - 1)) * innerGap
         var c = start
-        for s in 0..<slots {
+        for s in 0 ..< slots {
             let w = weights[s] / total * usable
             if pt < c + w / 2 { return s }
             c += w + innerGap
@@ -570,7 +566,7 @@ final class StackingLayout {
     var usedLanes: [Int] {
         var s: Set<Int> = []
         for span in placements.values {
-            for lane in span.lane0...span.lane1 { s.insert(lane) }
+            for lane in span.lane0 ... span.lane1 { s.insert(lane) }
         }
         return s.sorted()
     }
@@ -578,7 +574,7 @@ final class StackingLayout {
     /// Lanes with no windows.
     var emptyLanes: [Int] {
         let used = Set(usedLanes)
-        return (0..<shape.lanes).filter { !used.contains($0) }
+        return (0 ..< shape.lanes).filter { !used.contains($0) }
     }
 
     /// Number of slots in a lane = `max(slot1) + 1` over placements that
@@ -640,7 +636,7 @@ final class StackingLayout {
         guard fraction > 0, fraction < 1 else { return }
         let used = usedLanes
         guard used.contains(lane), used.count >= 2 else { return }
-        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
         let others = used.filter { $0 != lane }
         let othersSum = others.reduce(0.0) { $0 + weights[$1] }
         guard othersSum > 0 else { return }
@@ -658,7 +654,7 @@ final class StackingLayout {
     /// a fixed 1/3 (or 1/5) width that centers when it's the only column.
     func setLaneAbsoluteWidth(_ fraction: CGFloat, lane: Int) {
         guard fraction > 0, lane >= 0, lane < shape.lanes else { return }
-        var weights: [CGFloat] = (0..<shape.lanes).map { laneWeight(lane: $0) }
+        var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
         weights[lane] = fraction
         setLaneWeights(weights)
     }
@@ -706,7 +702,7 @@ extension StackingLayout {
     func resolveRect(
         for windowId: WindowId,
         in available: Rect,
-        innerGap: CGFloat = 0
+        innerGap: CGFloat = 0,
     ) -> Rect? {
         guard let span = placements[windowId] else { return nil }
         let used = usedLanes
@@ -730,7 +726,7 @@ extension StackingLayout {
         let slots = slotCount(in: span.lane0)
         guard slots > 0, span.slot0 < slots, span.slot1 < slots else { return nil }
         var weights: [CGFloat] = []
-        for s in 0..<slots { weights.append(slotWeight(lane: span.lane0, slot: s)) }
+        for s in 0 ..< slots { weights.append(slotWeight(lane: span.lane0, slot: s)) }
         let totalWeight = weights.reduce(0, +)
         guard totalWeight > 0 else { return nil }
         let totalSlotGap = max(0, CGFloat(slots - 1)) * innerGap
@@ -739,9 +735,9 @@ extension StackingLayout {
         // covered by the span). For single-lane spans this collapses to
         // `extent = usedLaneWeights[visIdx0]`.
         var lanePrefix: CGFloat = 0
-        for i in 0..<visIdx0 { lanePrefix += usedLaneWeights[i] }
+        for i in 0 ..< visIdx0 { lanePrefix += usedLaneWeights[i] }
         var laneExtent: CGFloat = 0
-        for i in visIdx0...visIdx1 { laneExtent += usedLaneWeights[i] }
+        for i in visIdx0 ... visIdx1 { laneExtent += usedLaneWeights[i] }
 
         // mur — fit-or-center (naru-style, carousel disabled). Lane weights
         // are absolute fractions of the lane-axis extent (default 1.0). If
@@ -767,9 +763,9 @@ extension StackingLayout {
                 let usableH = available.height - totalSlotGap
                 let x = available.topLeftX + laneStartLow
                 var y0 = available.topLeftY
-                for s in 0..<span.slot0 { y0 += weights[s] / totalWeight * usableH + innerGap }
+                for s in 0 ..< span.slot0 { y0 += weights[s] / totalWeight * usableH + innerGap }
                 var spanH: CGFloat = 0
-                for s in span.slot0...span.slot1 { spanH += weights[s] }
+                for s in span.slot0 ... span.slot1 { spanH += weights[s] }
                 let h = spanH / totalWeight * usableH + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
                 // Never emit a negative size (e.g. gaps wider than the axis).
                 return Rect(topLeftX: x, topLeftY: y0, width: max(0, laneSpan), height: max(0, h))
@@ -778,9 +774,9 @@ extension StackingLayout {
                 let usableW = available.width - totalSlotGap
                 let y = available.topLeftY + laneStartLow
                 var x0 = available.topLeftX
-                for s in 0..<span.slot0 { x0 += weights[s] / totalWeight * usableW + innerGap }
+                for s in 0 ..< span.slot0 { x0 += weights[s] / totalWeight * usableW + innerGap }
                 var spanW: CGFloat = 0
-                for s in span.slot0...span.slot1 { spanW += weights[s] }
+                for s in span.slot0 ... span.slot1 { spanW += weights[s] }
                 let w = spanW / totalWeight * usableW + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
                 // Never emit a negative size (e.g. gaps wider than the axis).
                 return Rect(topLeftX: x0, topLeftY: y, width: max(0, w), height: max(0, laneSpan))
@@ -834,13 +830,13 @@ extension StackingLayout {
         let slots = slotCount(in: lane)
         guard slots > 0 else { return (lane, 0) }
         var sw: [CGFloat] = []
-        for s in 0..<slots { sw.append(slotWeight(lane: lane, slot: s)) }
+        for s in 0 ..< slots { sw.append(slotWeight(lane: lane, slot: s)) }
         let totalSW = sw.reduce(0, +)
         let totalSlotGap = max(0, CGFloat(slots - 1)) * innerGap
         let usableSec = usableSecAxis - totalSlotGap
         var c2 = secStart
         var slot = slots - 1
-        for s in 0..<slots {
+        for s in 0 ..< slots {
             let w = sw[s] / totalSW * usableSec
             if secPt < c2 + w { slot = s; break }
             c2 += w + innerGap

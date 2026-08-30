@@ -21,7 +21,7 @@ struct StackingFocusDirCommand: Command {
         guard let window = target.windowOrNil else {
             if let code = crossEdgeFocus(
                 direction: args.direction.val, sourceWindow: nil,
-                sourceWorkspace: workspace, target: target,
+                sourceWorkspace: workspace,
             ) {
                 return code
             }
@@ -104,7 +104,6 @@ struct StackingFocusDirCommand: Command {
             direction: args.direction.val,
             sourceWindow: window,
             sourceWorkspace: workspace,
-            target: target,
         ) {
             return code
         }
@@ -151,21 +150,19 @@ private func crossEdgeFocus(
     direction: CardinalDirection,
     sourceWindow: Window?,
     sourceWorkspace: Workspace,
-    target: LiveFocus,
 ) -> BinaryExitCode? {
-    let dest: Workspace?
-    switch direction {
+    let dest: Workspace? = switch direction {
         case .up, .down:
             // Down → next, up → previous workspace on the same monitor,
             // INCLUDING empty ones, so the focus can leave the screen onto a
             // workspace that currently has no windows and still switch there.
-            dest = adjacentWorkspaceIncludingEmpty(from: sourceWorkspace, isNext: direction == .down)
+            adjacentWorkspaceIncludingEmpty(from: sourceWorkspace, isNext: direction == .down)
         case .left, .right:
             switch MonitorTarget.direction(direction).resolve(
                 sourceWorkspace.workspaceMonitor, wrapAround: false,
             ) {
-                case .success(let monitor): dest = monitor.activeWorkspace
-                case .failure:               dest = nil
+                case .success(let monitor): monitor.activeWorkspace
+                case .failure:               nil
             }
     }
     guard let dest, dest != sourceWorkspace else { return nil }
@@ -254,12 +251,11 @@ private func entryWindow(
             ? (destAvail.width  > 0 ? (c.x - destAvail.topLeftX) / destAvail.width  : 0.5)
             : (destAvail.height > 0 ? (c.y - destAvail.topLeftY) / destAvail.height : 0.5)
         let perpDist = abs(srcPerpFrac - destPerpFrac)
-        let edgeDist: CGFloat
-        switch direction {
-            case .down:  edgeDist = r.topLeftY - destAvail.topLeftY                                  // near top
-            case .up:    edgeDist = (destAvail.topLeftY + destAvail.height) - (r.topLeftY + r.height) // near bottom
-            case .right: edgeDist = r.topLeftX - destAvail.topLeftX                                  // near left
-            case .left:  edgeDist = (destAvail.topLeftX + destAvail.width) - (r.topLeftX + r.width)   // near right
+        let edgeDist: CGFloat = switch direction {
+            case .down:  r.topLeftY - destAvail.topLeftY                                  // near top
+            case .up:    (destAvail.topLeftY + destAvail.height) - (r.topLeftY + r.height) // near bottom
+            case .right: r.topLeftX - destAvail.topLeftX                                  // near left
+            case .left:  (destAvail.topLeftX + destAvail.width) - (r.topLeftX + r.width)   // near right
         }
         if let b = best {
             if perpDist < b.perp - 0.001 || (abs(perpDist - b.perp) <= 0.001 && edgeDist < b.edge) {

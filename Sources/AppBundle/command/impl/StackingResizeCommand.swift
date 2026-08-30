@@ -49,8 +49,8 @@ struct StackingResizeCommand: Command {
                 windowMemory.remember(appId: appId, title: title, workspace: workspace.name, shape: layout.shape, span: span)
                 windowMemory.save()
                 persistWindowStateSoon()
-            // Siblings' slots shift with a move/resize too — sweep the layout.
-            persistWindowStateSoon()
+                // Siblings' slots shift with a move/resize too — sweep the layout.
+                persistWindowStateSoon()
             }
             return .succ
         }
@@ -133,8 +133,8 @@ extension StackingResize {
     static let resizeFractionLadder: [CGFloat] = {
         var base: [CGFloat] = []
         let MAX_N = 16
-        for n in (2...MAX_N).reversed() { base.append(1.0 / CGFloat(n)) }
-        for n in 3...MAX_N { base.append(CGFloat(n - 1) / CGFloat(n)) }
+        for n in (2 ... MAX_N).reversed() { base.append(1.0 / CGFloat(n)) }
+        for n in 3 ... MAX_N { base.append(CGFloat(n - 1) / CGFloat(n)) }
         var dense: [CGFloat] = []
         for (i, r) in base.enumerated() {
             dense.append(r)
@@ -149,7 +149,7 @@ extension StackingResize {
     static func nearestLadderIndex(for f: CGFloat) -> Int {
         var bestIdx = 0
         var bestDist = abs(resizeFractionLadder[0] - f)
-        for i in 1..<resizeFractionLadder.count {
+        for i in 1 ..< resizeFractionLadder.count {
             let d = abs(resizeFractionLadder[i] - f)
             if d < bestDist {
                 bestDist = d
@@ -175,7 +175,7 @@ extension StackingResize {
         let used = layout.usedLanes
         guard used.count >= 2, lane >= 0, lane < layout.shape.lanes else { return }
         var weights: [CGFloat] = []
-        for l in 0..<layout.shape.lanes { weights.append(layout.laneWeight(lane: l)) }
+        for l in 0 ..< layout.shape.lanes { weights.append(layout.laneWeight(lane: l)) }
         let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
         guard usedTotal > 0 else { return }
         let w = weights[lane]
@@ -209,7 +209,7 @@ extension StackingResize {
     static func resizeLaneAbsolute(layout: StackingLayout, lane: Int, signum: Int, step: CGFloat = 0.1) {
         guard lane >= 0, lane < layout.shape.lanes, layout.usedLanes.contains(lane) else { return }
         var weights: [CGFloat] = []
-        for l in 0..<layout.shape.lanes { weights.append(layout.laneWeight(lane: l)) }
+        for l in 0 ..< layout.shape.lanes { weights.append(layout.laneWeight(lane: l)) }
         let cur = weights[lane]
         let next = max(0.1, min(1.0, cur + CGFloat(signum) * step))
         guard abs(next - cur) > 1e-6 else { return }
@@ -244,7 +244,7 @@ extension StackingResize {
         let slots = layout.slotCount(in: lane)
         guard slots >= 2, slot >= 0, slot < slots else { return }
         var weights: [CGFloat] = []
-        for s in 0..<slots { weights.append(layout.slotWeight(lane: lane, slot: s)) }
+        for s in 0 ..< slots { weights.append(layout.slotWeight(lane: lane, slot: s)) }
         let total = weights.reduce(0, +)
         guard total > 0 else { return }
         let w = weights[slot]
@@ -260,10 +260,10 @@ extension StackingResize {
         let sumOthers = total - w
         guard sumOthers > 0 else { return }
         weights[slot] = newW
-        for s in 0..<slots where s != slot {
+        for s in 0 ..< slots where s != slot {
             weights[s] -= delta * (weights[s] / sumOthers)
         }
-        repairFloor(weights: &weights, used: Array(0..<slots), minPer: minPer)
+        repairFloor(weights: &weights, used: Array(0 ..< slots), minPer: minPer)
         if weights.contains(where: { $0 <= 0 }) { return }
         layout.setSlotWeights(lane: lane, weights: weights)
     }

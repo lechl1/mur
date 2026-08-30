@@ -7,7 +7,7 @@ private var moveWithMouseTask: Task<(), any Error>? = nil
 func movedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
     let windowId = ax.containingWindowId()
     let notif = notif as String
-    Task { @MainActor in
+    fireAndForget { @MainActor in
         guard let token: RunSessionGuard = .isServerEnabled else { return }
         // mur — ignore move notifications from our own animation frames.
         if let windowId, WindowAnimator.shared.isDrivingFrame(windowId) { return }
@@ -87,7 +87,6 @@ private func moveStackingWindow(_ window: Window, workspace: Workspace) {
     gridDragSession = StackingDragSession(
         windowId: window.windowId,
         workspace: workspace,
-        sourceSpan: source,
         hoverCell: hoverCell,
     )
     StackingHud.shared.update(layout: layout, span: source, hoverSpan: hoverCell.map {

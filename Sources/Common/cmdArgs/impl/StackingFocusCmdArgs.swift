@@ -19,12 +19,6 @@ public struct StackingFocusCmdArgs: CmdArgs {
 
     public var lane: Lateinit<Int> = .uninitialized
     public var slot: Lateinit<Int> = .uninitialized
-
-    public init(rawArgs: [String], lane: Int, slot: Int) {
-        self.commonState = .init(rawArgs.slice)
-        self.lane = .initialized(lane)
-        self.slot = .initialized(slot)
-    }
 }
 
 public func parseStackingFocusCmdArgs(_ args: StrArrSlice) -> ParsedCmd<StackingFocusCmdArgs> {

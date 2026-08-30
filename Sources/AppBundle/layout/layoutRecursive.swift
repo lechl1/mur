@@ -32,7 +32,7 @@ extension Workspace {
     /// refreshes. `remove()` runs `compactGaps()`, so the survivors close
     /// ranks and the strip re-centres.
     @MainActor
-    fileprivate func pruneStackingLayout() {
+    private func pruneStackingLayout() {
         for windowId in Array(stackingLayout.placements.keys) {
             guard let window = Window.get(byId: windowId) else {
                 _ = stackingLayout.remove(windowId)
@@ -56,7 +56,7 @@ extension Workspace {
     /// own; that's a focus/raise concern handled when a window is
     /// promoted in `stackingLayout`. This function only places geometry.
     @MainActor
-    fileprivate func layoutWorkspaceWithStacking() async throws {
+    private func layoutWorkspaceWithStacking() async throws {
         let context = LayoutContext(self)
         pruneStackingLayout()
         let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
@@ -70,7 +70,7 @@ extension Workspace {
         // a refinement for a later commit; in the meantime, slots and
         // lanes share the same gap for visual consistency.
         let slotGap = CGFloat(context.resolvedGaps.inner.get(
-            stackingLayout.shape.orientation == .landscape ? .v : .h
+            stackingLayout.shape.orientation == .landscape ? .v : .h,
         ))
 
         // mur — NO auto-grow-to-fit. A column/row is never grown to fit a
@@ -332,7 +332,7 @@ private let fillRetryLimit = 2
 private let fillTolerance: CGFloat = 2
 
 @MainActor
-fileprivate func scheduleFillCheck(window: Window, target: Rect, in workspace: Workspace) {
+private func scheduleFillCheck(window: Window, target: Rect, in workspace: Workspace) {
     let windowId = window.windowId
     if workspace.stackingLayout.nonResizableWindows.contains(windowId) { return }
     let previous = fillAttempts[windowId]

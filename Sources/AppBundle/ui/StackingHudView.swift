@@ -26,14 +26,14 @@ import SwiftUI
         let laneWeights = used.map { layout.laneWeight(lane: $0) }
         let slotsPerLane = used.map { max(1, layout.slotCount(in: $0)) }
         let slotWeights = zip(used, slotsPerLane).map { lane, slots in
-            (0..<slots).map { layout.slotWeight(lane: lane, slot: $0) }
+            (0 ..< slots).map { layout.slotWeight(lane: lane, slot: $0) }
         }
         // Per-cell window count: number of placements covering each
         // (lane, slot). 0 = empty (only ever happens for lanes with no
         // placements at all, since usedLanes filters those out), 1 =
         // single occupant, 2+ = overlapping windows.
         let cellCounts: [[Int]] = zip(used, slotsPerLane).map { lane, slots in
-            (0..<slots).map { slot in
+            (0 ..< slots).map { slot in
                 layout.placements.values.reduce(0) { acc, p in
                     acc + (p.lane0 <= lane && lane <= p.lane1
                         && p.slot0 <= slot && slot <= p.slot1 ? 1 : 0)
@@ -128,20 +128,20 @@ struct StackingHudView: View {
         let mainAxis: CGFloat = snapshot.orientation == .landscape ? size.width : size.height
         let usableMain = mainAxis - CGFloat(max(0, n - 1)) * cellPad
         let laneSizes = Self.proportionalSizes(
-            weights: snapshot.laneWeights, total: usableMain
+            weights: snapshot.laneWeights, total: usableMain,
         )
 
         switch snapshot.orientation {
             case .landscape:
                 HStack(spacing: cellPad) {
-                    ForEach(0..<n, id: \.self) { i in
+                    ForEach(0 ..< n, id: \.self) { i in
                         slotStack(at: i)
                             .frame(width: laneSizes[i], height: size.height)
                     }
                 }
             case .portrait:
                 VStack(spacing: cellPad) {
-                    ForEach(0..<n, id: \.self) { i in
+                    ForEach(0 ..< n, id: \.self) { i in
                         slotStack(at: i)
                             .frame(width: size.width, height: laneSizes[i])
                     }
@@ -160,7 +160,7 @@ struct StackingHudView: View {
                     let usable = laneGeo.size.height - CGFloat(max(0, slots - 1)) * cellPad
                     let slotSizes = Self.proportionalSizes(weights: weights, total: usable)
                     VStack(spacing: cellPad) {
-                        ForEach(0..<slots, id: \.self) { slot in
+                        ForEach(0 ..< slots, id: \.self) { slot in
                             cell(lane: lane, slot: slot, laneIdx: idx)
                                 .frame(width: laneGeo.size.width, height: slotSizes[slot])
                         }
@@ -169,7 +169,7 @@ struct StackingHudView: View {
                     let usable = laneGeo.size.width - CGFloat(max(0, slots - 1)) * cellPad
                     let slotSizes = Self.proportionalSizes(weights: weights, total: usable)
                     HStack(spacing: cellPad) {
-                        ForEach(0..<slots, id: \.self) { slot in
+                        ForEach(0 ..< slots, id: \.self) { slot in
                             cell(lane: lane, slot: slot, laneIdx: idx)
                                 .frame(width: slotSizes[slot], height: laneGeo.size.height)
                         }
@@ -196,11 +196,11 @@ struct StackingHudView: View {
         var pinned: [Bool] = Array(repeating: false, count: n)
         while true {
             var newlyPinned = false
-            let pinnedSum = (0..<n).reduce(0.0) { $0 + (pinned[$1] ? sizes[$1] : 0) }
+            let pinnedSum = (0 ..< n).reduce(0.0) { $0 + (pinned[$1] ? sizes[$1] : 0) }
             let remaining = total - pinnedSum
-            let unpinnedWeightSum = (0..<n).reduce(0.0) { $0 + (pinned[$1] ? 0 : weights[$1]) }
+            let unpinnedWeightSum = (0 ..< n).reduce(0.0) { $0 + (pinned[$1] ? 0 : weights[$1]) }
             guard unpinnedWeightSum > 0 else { break }
-            for i in 0..<n where !pinned[i] {
+            for i in 0 ..< n where !pinned[i] {
                 let s = remaining * weights[i] / unpinnedWeightSum
                 if s < floor {
                     sizes[i] = floor

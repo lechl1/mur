@@ -56,7 +56,7 @@ public func dieT<T>(
     }
     if !recursionDetectorDuringTermination {
         let semaphore = DispatchSemaphore(value: 0)
-        Task {
+        fireAndForget {
             defer { semaphore.signal() }
             try await $recursionDetectorDuringTermination.withValue(true) {
                 try await terminationHandler.beforeTermination()
@@ -194,6 +194,35 @@ public func exitT<T>(_ exitCode: Int32, out: String? = nil, err: String? = nil) 
 
 /// 'id' stands for 'identity'. It's a common name in functional programming
 public func id<T>(_ t: T) -> T { t }
+
+/// mur — a fire-and-forget task whose body can throw.
+///
+/// `Task { try await … }` SWALLOWS whatever the body throws: the error is
+/// parked in the task's result, and nobody ever reads a fire-and-forget
+/// task's result. mur's convention is that `throws` carries only
+/// `CancellationError` (see `allowOnlyCancellationError`), so a cancelled
+/// task is genuinely nothing to report — but anything else arriving here is
+/// a bug that would otherwise vanish without a trace, so it gets logged
+/// with the site that started the task.
+///
+/// The body keeps its own isolation (`@isolated(any)`), so
+/// `fireAndForget { @MainActor in … }` behaves exactly like the
+/// `Task { @MainActor in … }` it replaces.
+public func fireAndForget(
+    file: String = #fileID,
+    line: Int = #line,
+    _ body: @escaping @isolated(any) @Sendable () async throws -> Void,
+) {
+    Task {
+        do {
+            try await body()
+        } catch is CancellationError {
+            // Expected: the session this task belonged to was superseded.
+        } catch {
+            eprint("\(file):\(line) background task failed: \(error)")
+        }
+    }
+}
 
 @inlinable
 public func allowOnlyCancellationError<T>(_ block: () async throws -> sending T) async throws -> sending T {

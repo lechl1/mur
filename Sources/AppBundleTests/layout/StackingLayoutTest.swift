@@ -39,11 +39,11 @@ struct StackingLayoutTest {
     @Test func laneSlotCountsAreIndependent() {
         let layout = StackingLayout(shape: .landscapeDefault) // 3 lanes
         // Lane 0: 4 slots (left column has 4 rows in landscape)
-        for s in 0..<4 { layout.place(WindowId(100 + s), at: .single(lane: 0, slot: s)) }
+        for s in 0 ..< 4 { layout.place(WindowId(100 + s), at: .single(lane: 0, slot: s)) }
         // Lane 1: 2 slots (middle column 2 rows)
-        for s in 0..<2 { layout.place(WindowId(200 + s), at: .single(lane: 1, slot: s)) }
+        for s in 0 ..< 2 { layout.place(WindowId(200 + s), at: .single(lane: 1, slot: s)) }
         // Lane 2: 3 slots (right column 3 rows)
-        for s in 0..<3 { layout.place(WindowId(300 + s), at: .single(lane: 2, slot: s)) }
+        for s in 0 ..< 3 { layout.place(WindowId(300 + s), at: .single(lane: 2, slot: s)) }
 
         #expect(layout.slotCount(in: 0) == 4)
         #expect(layout.slotCount(in: 1) == 2)

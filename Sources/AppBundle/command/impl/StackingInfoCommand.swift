@@ -56,7 +56,7 @@ struct StackingInfoCommand: Command {
             // Show lane0's slot weights (canonical for multi-lane spans).
             let slots = layout.slotCount(in: span.lane0)
             var weights: [String] = []
-            for s in 0..<slots {
+            for s in 0 ..< slots {
                 let w = layout.slotWeight(lane: span.lane0, slot: s)
                 weights.append(String(format: "%.2f", w))
             }

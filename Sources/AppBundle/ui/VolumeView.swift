@@ -33,7 +33,15 @@ public final class VolumePanel: NSPanelHud {
 }
 
 struct VolumeView: View {
-    @State var volume: Float? = nil
+    @State private var volume: Float?
+
+    // Seeding @State through the memberwise init is the SwiftUI trap the
+    // linter is pointing at: the value is only read on the FIRST render of
+    // a given view identity. Spelled out here because that's exactly what
+    // this view wants — the hosting view is rebuilt per volume change.
+    init(volume: Float? = nil) {
+        _volume = State(initialValue: volume)
+    }
 
     @Environment(\.colorScheme) var colorScheme: ColorScheme
     private var barColor: Color {

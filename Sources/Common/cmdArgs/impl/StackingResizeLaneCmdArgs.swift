@@ -27,9 +27,4 @@ public struct StackingResizeLaneCmdArgs: CmdArgs {
     )
 
     public var delta: Lateinit<StackingSizeDelta> = .uninitialized
-
-    public init(rawArgs: [String], delta: StackingSizeDelta) {
-        self.commonState = .init(rawArgs.slice)
-        self.delta = .initialized(delta)
-    }
 }

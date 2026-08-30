@@ -80,11 +80,6 @@ final class WindowAnimator {
 
     private func elapsed(_ t0: TimeInterval) -> CGFloat { CGFloat(max(0, t0 - sharedStart)) }
 
-    /// Single-window convenience — delegates to `animateBatch`.
-    func animate(_ window: Window, from: Rect?, to: Rect) {
-        animateBatch([(window: window, from: from, to: to)])
-    }
-
     /// Animate a whole set of windows to their (already-computed) targets as
     /// one synchronized group. Current positions are captured up front, so a
     /// swap animates correctly and a fresh move retargets in-flight windows.

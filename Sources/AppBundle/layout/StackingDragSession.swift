@@ -11,7 +11,6 @@ import Common
 struct StackingDragSession {
     let windowId: WindowId
     let workspace: Workspace
-    let sourceSpan: TileSpan
     /// Cell currently under the cursor. nil → outside grid bounds.
     var hoverCell: (lane: Int, slot: Int)?
 }

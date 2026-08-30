@@ -21,7 +21,7 @@ enum GlobalObserver {
 
     private static func onHideApp(_ notification: Notification) {
         let notifName = notification.name.rawValue
-        Task { @MainActor in
+        fireAndForget { @MainActor in
             guard let token: RunSessionGuard = .isServerEnabled else { return }
             try await runLightSession(.globalObserver(notifName), token) {
                 if config.automaticallyUnhideMacosHiddenApps {
@@ -43,21 +43,30 @@ enum GlobalObserver {
         }
     }
 
+    /// mur — the opaque observers handed back by the block-based
+    /// `addObserver`. They must be kept: NotificationCenter is the only
+    /// other holder, and a dropped token is a registration that can never
+    /// be removed. mur's observers live as long as the process, so this is
+    /// simply where they live.
+    @MainActor private static var observerTokens: [any NSObjectProtocol] = []
+
     @MainActor
     static func initObserver() {
         let nc = NSWorkspace.shared.notificationCenter
-        nc.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main, using: onNotif)
-        nc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main, using: onNotif)
-        nc.addObserver(forName: NSWorkspace.didHideApplicationNotification, object: nil, queue: .main, using: onHideApp)
-        nc.addObserver(forName: NSWorkspace.didUnhideApplicationNotification, object: nil, queue: .main, using: onNotif)
-        nc.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: onNotif)
-        nc.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main, using: onNotif)
+        observerTokens += [
+            nc.addObserver(forName: NSWorkspace.didLaunchApplicationNotification, object: nil, queue: .main, using: onNotif),
+            nc.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main, using: onNotif),
+            nc.addObserver(forName: NSWorkspace.didHideApplicationNotification, object: nil, queue: .main, using: onHideApp),
+            nc.addObserver(forName: NSWorkspace.didUnhideApplicationNotification, object: nil, queue: .main, using: onNotif),
+            nc.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: onNotif),
+            nc.addObserver(forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main, using: onNotif),
+        ]
 
         NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { _ in
             // todo reduce number of refreshSession in the callback
             //  resetManipulatedWithMouseIfPossible might call its own refreshSession
             //  The end of the callback calls refreshSession
-            Task { @MainActor in
+            fireAndForget { @MainActor in
                 guard let token: RunSessionGuard = .isServerEnabled else { return }
                 // mur — drag-drop snap. Commit a grid drag (if any)
                 // before resetting the mouse-manipulation state.

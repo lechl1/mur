@@ -46,7 +46,7 @@ extension HotKey {
         }
         let bindingKey = binding.descriptionWithKeyCode
         let fire: @MainActor () -> Void = {
-            Task {
+            fireAndForget { @MainActor in
                 if let activeMode {
                     broadcastEvent(.bindingTriggered(
                         mode: activeMode,

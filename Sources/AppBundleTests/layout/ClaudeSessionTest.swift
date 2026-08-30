@@ -23,9 +23,9 @@ struct ClaudeSessionTest {
         let url = dir.appendingPathComponent("\(id).jsonl")
         // Leading metadata records carry no cwd — the scan has to look past them.
         let body = """
-        {"type":"mode","mode":"default"}
-        {"type":"user","cwd":"\(cwd)","message":"hi"}
-        """
+            {"type":"mode","mode":"default"}
+            {"type":"user","cwd":"\(cwd)","message":"hi"}
+            """
         try? body.write(to: url, atomically: true, encoding: .utf8)
         try? FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: url.path)
     }

@@ -3,7 +3,7 @@ import Common
 import Foundation
 
 @MainActor public func initAppBundle() {
-    Task {
+    fireAndForget { @MainActor in
         initTerminationHandler()
         unsafe _isCli = false
         initServerArgs()

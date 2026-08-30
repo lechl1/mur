@@ -119,6 +119,34 @@ candidate is confirmed against the `cwd` recorded inside the transcript
 before its id is trusted. Transcripts run to megabytes; only a bounded
 head is read.
 
+## Linting: bugs only
+
+`.swiftlint.yml` is a **bug detector, not a style guide**. Every rule in it
+names something that can misbehave at runtime — a swallowed error, a leaked
+observer, a comparison that's always true, a test that silently never runs —
+and `strict: true` makes each one an error. Formatting is SwiftFormat's job
+(`./format.sh` rewrites the code instead of complaining about it), so no
+spacing / ordering / naming / line-width rule belongs in the lint config.
+The bar for adding a rule: it must name a defect. Rules deliberately left
+off (`force_cast`, `force_unwrapping`, `implicitly_unwrapped_optional`,
+`async_without_await`, `optional_data_string_conversion`) are listed in the
+file with the reason — don't re-add one without answering it.
+
+`bash lint.sh` runs the whole gate: SwiftFormat → SwiftLint → **periphery**
+(unused-code detection, also `--strict`). Periphery counts as part of the
+bug set: dead code is code no test covers and no reader can trust. Two
+fields carry `// periphery:ignore` with a reason — a Hashable key component
+and an on-disk schema marker, both genuinely used, just not by a reader in
+this codebase.
+
+`fireAndForget { … }` (in `Common/util/commonUtil.swift`) exists because of
+one of these rules: `Task { try await … }` parks whatever the body throws
+in a result nobody reads. mur's convention is that `throws` carries only
+`CancellationError`, so the helper ignores exactly that and logs anything
+else. Pass `@MainActor in` where the `Task` it replaced inherited main-actor
+isolation — the helper's body is `@Sendable`, so it starts nonisolated
+otherwise.
+
 ## Installing (`just install`)
 
 `just install` builds the debug bundle, installs it as

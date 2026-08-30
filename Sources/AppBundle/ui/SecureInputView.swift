@@ -43,7 +43,7 @@ public final class SecureInputPanel: NSPanelHud {
 }
 
 struct SecureInputView: View {
-    @State var isMinimized: Bool = true
+    @State private var isMinimized: Bool = true
 
     @Environment(\.colorScheme) var colorScheme: ColorScheme
     private var fontColor: Color {

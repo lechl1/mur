@@ -4,9 +4,9 @@ import XCTest
 
 final class ClientServerTest: XCTestCase {
     func testClientRequestJsonV1_decoding() {
-        let data = """
+        let data = Data("""
             { "command": "deprecated", "args": ["foo", "bar"], "stdin": "stdin" }
-            """.data(using: .utf8)!
+            """.utf8)
         let expected = ClientRequest(args: ["foo", "bar"], stdin: "stdin", windowId: nil, workspace: nil)
             .copy(\.windowId, nil)
             .copy(\.workspace, nil)
@@ -14,9 +14,9 @@ final class ClientServerTest: XCTestCase {
     }
 
     func testClientRequestJsonV2_decoding() {
-        let data = """
+        let data = Data("""
             { "args": ["foo", "bar"], "stdin": "stdin" }
-            """.data(using: .utf8)!
+            """.utf8)
         let expected = ClientRequest(args: ["foo", "bar"], stdin: "stdin", windowId: nil, workspace: nil)
             .copy(\.windowId, nil)
             .copy(\.workspace, nil)
@@ -24,29 +24,29 @@ final class ClientServerTest: XCTestCase {
     }
 
     func testClientRequestJsonV3_decoding() {
-        let data = """
+        let data = Data("""
             { "args": ["foo", "bar"], "stdin": "stdin", "windowId": null, "workspace": null }
-            """.data(using: .utf8)!
+            """.utf8)
         let expected = ClientRequest(args: ["foo", "bar"], stdin: "stdin", windowId: nil, workspace: nil)
         assertSucc(ClientRequest.decodeJson(data), expected)
     }
 
     func testClientRequestJsonV3_decoding2() {
-        let data = """
+        let data = Data("""
             { "args": ["foo", "bar"], "stdin": "stdin", "windowId": 1, "workspace": "foo" }
-            """.data(using: .utf8)!
+            """.utf8)
         let expected = ClientRequest(args: ["foo", "bar"], stdin: "stdin", windowId: 1, workspace: "foo")
         assertSucc(ClientRequest.decodeJson(data), expected)
     }
 
     func testClientRequestJsonV9999_decoding() {
-        let data = """
+        let data = Data("""
             { "args": ["foo", "bar"], "stdin": "stdin", "yet another future field": 1 }
-            """.data(using: .utf8)!
+            """.utf8)
         assertSucc(ClientRequest.decodeJson(data))
     }
 
-    func testClientRequestJsonCompatibility_encoding() {
+    func testClientRequestJsonCompatibility_encoding() throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let testData = [
@@ -58,13 +58,13 @@ final class ClientServerTest: XCTestCase {
                 """),
         ]
         for (req, expectedJson) in testData {
-            let data = try! encoder.encode(req)
+            let data = try encoder.encode(req)
             let str = String.init(data: data, encoding: .utf8)!
             assertEquals(str, expectedJson)
         }
     }
 
-    func testServerEventEncoding() {
+    func testServerEventEncoding() throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let testData: [(ServerEvent, String)] = [
@@ -87,13 +87,13 @@ final class ClientServerTest: XCTestCase {
              #"{"_event":"binding-triggered","binding":"alt-h","mode":"main"}"#),
         ]
         for (event, expectedJson) in testData {
-            let data = try! encoder.encode(event)
+            let data = try encoder.encode(event)
             let str = String(data: data, encoding: .utf8)!
             assertEquals(str, expectedJson)
         }
     }
 
-    func testServerEventDecoding() {
+    func testServerEventDecoding() throws {
         let testData: [(String, ServerEventType)] = [
             (#"{"_event":"focus-changed","windowId":123,"workspace":"1","monitorId":1}"#, .focusChanged),
             (#"{"_event":"focused-monitor-changed","workspace":"2","monitorId":1}"#, .focusedMonitorChanged),
@@ -103,8 +103,8 @@ final class ClientServerTest: XCTestCase {
             (#"{"_event":"binding-triggered","mode":"main","binding":"alt-h"}"#, .bindingTriggered),
         ]
         for (json, expectedEventType) in testData {
-            let data = json.data(using: .utf8)!
-            let event = try! JSONDecoder().decode(ServerEvent.self, from: data)
+            let data = Data(json.utf8)
+            let event = try JSONDecoder().decode(ServerEvent.self, from: data)
             assertEquals(event.eventType, expectedEventType)
         }
     }

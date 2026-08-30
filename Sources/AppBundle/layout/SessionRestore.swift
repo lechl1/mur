@@ -99,27 +99,6 @@ final class TerminalSessionStore {
 @MainActor let sessionRestoreShellArgv: [String] = ["--working-directory=%CWD%"]
 @MainActor let sessionRestoreClaudeArgv: [String] = ["--working-directory=%CWD%", "-e", "claude", "--resume"]
 
-/// Record/refresh the terminal session for `window` (cwd + whether claude is
-/// running in it + current grid span). No-op for non-terminals. Async: reads
-/// the cwd via AX and scans processes off the main thread.
-@MainActor
-func captureTerminalSession(_ window: Window, in workspace: Workspace) {
-    let appId = window.app.rawAppBundleId ?? ""
-    guard sessionRestoreTerminalBundleIds.contains(appId) else { return }
-    let windowId = window.windowId
-    Task { @MainActor in
-        guard let cwd = try? await window.cwd, !cwd.isEmpty,
-              let span = workspace.stackingLayout.placements[windowId] else { return }
-        let kind: TerminalSession.Kind = await claudeCwds().contains(cwd) ? .claude : .shell
-        lastKnownTerminalCwd[windowId] = cwd
-        terminalSessionStore.remember(TerminalSession(
-            cwd: cwd, kind: kind, workspace: workspace.name, span: span,
-            claudeSessionId: kind == .claude ? await claudeSessionId(forCwd: cwd) : nil,
-        ))
-        terminalSessionStore.save()
-    }
-}
-
 /// mur — record every open terminal's session in one pass: one process scan
 /// for the whole sweep instead of one per window. Called from
 /// `persistWindowStateNow` after windows open and after moves, so a session

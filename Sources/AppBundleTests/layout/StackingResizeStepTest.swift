@@ -40,7 +40,7 @@ struct StackingResizeStepTest {
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
-        for _ in 0..<30 {
+        for _ in 0 ..< 30 {
             StackingResize.resizeLane(layout: layout, lane: 0, signum: -1)
         }
         let total = layout.laneWeight(lane: 0) + layout.laneWeight(lane: 1)
@@ -66,7 +66,7 @@ struct StackingResizeStepTest {
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
-        for _ in 0..<30 {
+        for _ in 0 ..< 30 {
             StackingResize.resizeLane(layout: layout, lane: 0, signum: +1)
         }
         let total = layout.laneWeight(lane: 0) + layout.laneWeight(lane: 1)

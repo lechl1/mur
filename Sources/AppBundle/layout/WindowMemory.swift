@@ -15,6 +15,9 @@ import Foundation
 /// Persisted to `~/.config/mur/window-memory.json`.
 struct WindowMemoryKey: Hashable, Codable {
     let appId: String
+    // periphery:ignore - read through the synthesized Hashable/Codable
+    // conformance: the title is half of the key that tells two windows
+    // of the same app apart.
     let windowTitle: String
 }
 
@@ -192,15 +195,11 @@ final class WindowMemory {
         entries[shape] = byShape
     }
 
-    func forget(appId: String, title: String, shape: LayoutShape) {
-        let key = WindowMemoryKey(appId: appId, windowTitle: title)
-        entries[shape]?.removeValue(forKey: key)
-        if entries[shape]?.isEmpty == true { entries.removeValue(forKey: shape) }
-    }
-
     // MARK: persistence
 
     private struct OnDisk: Codable {
+        // periphery:ignore - the on-disk schema marker. Write-only by
+        // design: it exists so a future reader can tell versions apart.
         let version: Int
         let entries: [Keyed]
     }

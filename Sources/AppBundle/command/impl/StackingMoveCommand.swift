@@ -22,10 +22,9 @@ private func crossWorkspaceOrMonitorFallback(
     target: LiveFocus,
     io: CmdIo,
 ) -> Bool {
-    let dest: Workspace?
-    switch direction {
+    let dest: Workspace? = switch direction {
         case .up, .down:
-            dest = getNextPrevWorkspace(
+            getNextPrevWorkspace(
                 current: sourceWorkspace,
                 isNext: direction == .down,
                 wrapAround: true,
@@ -36,8 +35,8 @@ private func crossWorkspaceOrMonitorFallback(
             switch MonitorTarget.direction(direction).resolve(
                 sourceWorkspace.workspaceMonitor, wrapAround: false,
             ) {
-                case .success(let monitor): dest = monitor.activeWorkspace
-                case .failure:               dest = nil
+                case .success(let monitor): monitor.activeWorkspace
+                case .failure:               nil
             }
     }
     guard let dest, dest != sourceWorkspace else { return false }
@@ -88,12 +87,11 @@ private func insertMovedWindowPositionally(
     let srcCenter = sourceRect?.center ?? srcAvail.center
     let fx = srcAvail.width > 0 ? (srcCenter.x - srcAvail.topLeftX) / srcAvail.width : 0.5
     let fy = srcAvail.height > 0 ? (srcCenter.y - srcAvail.topLeftY) / srcAvail.height : 0.5
-    let entry: CGPoint
-    switch direction {
-        case .right: entry = CGPoint(x: destAvail.topLeftX + 1,                       y: destAvail.topLeftY + fy * destAvail.height)
-        case .left:  entry = CGPoint(x: destAvail.topLeftX + destAvail.width - 1,      y: destAvail.topLeftY + fy * destAvail.height)
-        case .down:  entry = CGPoint(x: destAvail.topLeftX + fx * destAvail.width,     y: destAvail.topLeftY + 1)
-        case .up:    entry = CGPoint(x: destAvail.topLeftX + fx * destAvail.width,     y: destAvail.topLeftY + destAvail.height - 1)
+    let entry: CGPoint = switch direction {
+        case .right: CGPoint(x: destAvail.topLeftX + 1,                       y: destAvail.topLeftY + fy * destAvail.height)
+        case .left:  CGPoint(x: destAvail.topLeftX + destAvail.width - 1,      y: destAvail.topLeftY + fy * destAvail.height)
+        case .down:  CGPoint(x: destAvail.topLeftX + fx * destAvail.width,     y: destAvail.topLeftY + 1)
+        case .up:    CGPoint(x: destAvail.topLeftX + fx * destAvail.width,     y: destAvail.topLeftY + destAvail.height - 1)
     }
     guard let cell = layout.cellAt(point: entry, in: destAvail, innerGap: sg) else {
         layout.place(window.windowId, at: .soleSlot(lane: 0))
@@ -167,8 +165,8 @@ struct StackingMoveCommand: Command {
                 windowMemory.remember(appId: appId, title: title, workspace: workspace.name, shape: layout.shape, span: span)
                 windowMemory.save()
                 persistWindowStateSoon()
-            // Siblings' slots shift with a move/resize too — sweep the layout.
-            persistWindowStateSoon()
+                // Siblings' slots shift with a move/resize too — sweep the layout.
+                persistWindowStateSoon()
             }
             return .succ
         }
@@ -277,11 +275,10 @@ struct StackingMoveCommand: Command {
                 ))
             } else if neighborSlot >= 0 && neighborSlot < slots {
                 let dir = args.direction.val
-                let slotIsOverlap: Bool
-                if let g = stackingMoveGesture, g.windowId == window.windowId, g.direction == dir {
-                    slotIsOverlap = g.nextIsOverlap
+                let slotIsOverlap: Bool = if let g = stackingMoveGesture, g.windowId == window.windowId, g.direction == dir {
+                    g.nextIsOverlap
                 } else {
-                    slotIsOverlap = true
+                    true
                 }
                 stackingMoveGesture = StackingMoveGesture(
                     windowId: window.windowId, direction: dir, nextIsOverlap: !slotIsOverlap,
@@ -330,8 +327,8 @@ struct StackingMoveCommand: Command {
                 windowMemory.remember(appId: appId, title: title, workspace: workspace.name, shape: shape, span: newSpan)
                 windowMemory.save()
                 persistWindowStateSoon()
-            // Siblings' slots shift with a move/resize too — sweep the layout.
-            persistWindowStateSoon()
+                // Siblings' slots shift with a move/resize too — sweep the layout.
+                persistWindowStateSoon()
             }
         }
         return .succ
