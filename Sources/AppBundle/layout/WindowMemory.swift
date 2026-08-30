@@ -120,19 +120,47 @@ final class WindowMemory {
         entries[shape]?[WindowMemoryKey(appId: appId, windowTitle: title)]
     }
 
-    /// mur — every TILED state remembered for `appId`, ordered by cell
-    /// (lane, then slot). Used as the fallback when the exact title misses:
-    /// plenty of apps rewrite their title as you use them (a browser shows
-    /// the current tab, a terminal shows the running command), so an
-    /// exact-title-only memory forgets those windows on every restart and
-    /// they land wherever the heuristic drops them. Handing this app's
-    /// windows its remembered cells in order keeps their relative layout
-    /// stable even when no single title matches.
+    /// mur — every TILED state remembered for `appId`, ordered by WORKSPACE
+    /// first and then by cell (lane, then slot). Used as the fallback when
+    /// the exact title misses: plenty of apps rewrite their title as you use
+    /// them (a browser shows the current tab, a terminal shows the running
+    /// command), so an exact-title-only memory forgets those windows on
+    /// every restart and they land wherever the heuristic drops them.
+    /// Handing this app's windows its remembered cells in order keeps their
+    /// relative layout stable even when no single title matches.
+    ///
+    /// Ordering by workspace matters: sorting by cell alone interleaves the
+    /// workspaces (every workspace has a lane 0), so N windows of one app
+    /// spread over several workspaces got handed cells in an order that had
+    /// nothing to do with where they came from. Workspace-major order fills
+    /// one workspace's columns before moving to the next.
     func recallTiledByApp(appId: String, shape: LayoutShape) -> [StoredWindowState] {
         (entries[shape] ?? [:])
             .filter { $0.key.appId == appId && !$0.value.floating }
             .map(\.value)
-            .sorted { ($0.span.lane0, $0.span.slot0) < ($1.span.lane0, $1.span.slot0) }
+            .sorted {
+                ($0.workspace, $0.span.lane0, $0.span.slot0)
+                    < ($1.workspace, $1.span.lane0, $1.span.slot0)
+            }
+    }
+
+    /// mur — the workspace this app's windows are remembered in, or `nil` if
+    /// nothing is remembered for it. Ties (an app spread over several
+    /// workspaces) break towards the workspace holding the most of its
+    /// windows, then by name so the answer is stable across restarts.
+    ///
+    /// The restore needs this because macOS has no workspaces: at startup
+    /// EVERY window is registered into whichever workspace happens to be
+    /// active, so a window mur can't recognise (title rewritten, and its
+    /// app's remembered cells already handed out) would otherwise stay
+    /// there — the "windows jump back to the first workspace" symptom.
+    /// Falling back to where the app lives keeps it off workspace 1.
+    func dominantWorkspace(appId: String, shape: LayoutShape) -> String? {
+        var counts: [String: Int] = [:]
+        for (key, state) in entries[shape] ?? [:] where key.appId == appId && !state.workspace.isEmpty {
+            counts[state.workspace, default: 0] += 1
+        }
+        return counts.max { ($0.value, $1.key) < ($1.value, $0.key) }?.key
     }
 
     // MARK: mutation

@@ -32,6 +32,45 @@ struct WindowMemoryTest {
         #expect(reloaded.recall(appId: "com.app", title: "Doc C", shape: shape) == nil)
     }
 
+    /// The app-span pool is the fallback when a title miss means mur can't
+    /// tell which window is which. It must hand out cells WORKSPACE-MAJOR:
+    /// ordering by cell alone interleaves the workspaces (every workspace
+    /// has a lane 0), scattering an app's windows across workspaces they
+    /// never lived in.
+    @Test func tiledPoolIsOrderedByWorkspaceThenCell() {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let shape = LayoutShape.landscapeDefault
+        let mem = WindowMemory(storeURL: url)
+        mem.remember(appId: "com.app", title: "w3 right", workspace: "3", shape: shape, span: .single(lane: 1, slot: 0))
+        mem.remember(appId: "com.app", title: "w3 left", workspace: "3", shape: shape, span: .single(lane: 0, slot: 0))
+        mem.remember(appId: "com.app", title: "w1 left", workspace: "1", shape: shape, span: .single(lane: 0, slot: 0))
+        mem.rememberFloating(appId: "com.app", title: "floater", workspace: "1", shape: shape)
+        mem.remember(appId: "other.app", title: "nope", workspace: "1", shape: shape, span: .single(lane: 0, slot: 0))
+
+        let pool = mem.recallTiledByApp(appId: "com.app", shape: shape)
+        #expect(pool.map(\.workspace) == ["1", "3", "3"]) // floater and other app excluded
+        #expect(pool.map { $0.span.lane0 } == [0, 0, 1])
+    }
+
+    @Test func dominantWorkspaceIsWhereMostOfTheAppLives() {
+        let url = tempURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let shape = LayoutShape.landscapeDefault
+        let mem = WindowMemory(storeURL: url)
+        #expect(mem.dominantWorkspace(appId: "com.app", shape: shape) == nil)
+
+        mem.remember(appId: "com.app", title: "a", workspace: "3", shape: shape, span: .single(lane: 0, slot: 0))
+        mem.remember(appId: "com.app", title: "b", workspace: "3", shape: shape, span: .single(lane: 1, slot: 0))
+        mem.remember(appId: "com.app", title: "c", workspace: "1", shape: shape, span: .single(lane: 0, slot: 0))
+        #expect(mem.dominantWorkspace(appId: "com.app", shape: shape) == "3")
+
+        // A tie breaks by name, so the answer doesn't flip between restarts.
+        mem.remember(appId: "com.app", title: "d", workspace: "1", shape: shape, span: .single(lane: 1, slot: 0))
+        #expect(mem.dominantWorkspace(appId: "com.app", shape: shape) == "1")
+        #expect(mem.dominantWorkspace(appId: "unknown.app", shape: shape) == nil)
+    }
+
     @Test func rememberFloatingKeepsPreviousSpan() {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }

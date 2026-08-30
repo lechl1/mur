@@ -222,14 +222,26 @@ private func openTerminalCwds() async -> Set<String> {
 
 /// This window's cwd: what it reports, else what mur last saw, else the
 /// session mur just spawned (see `pendingSpawnedCwds`).
+///
+/// Adoption is STICKY — the adopted cwd is written to `lastKnownTerminalCwd`
+/// so every later question about this window answers the same way. Adoption
+/// consumes a spawn record, and this is called from several places (the
+/// settle poll, the coordinated restore, session capture); without the
+/// sticky write the first caller ate the record and the next one adopted a
+/// *different* session's cwd — restoring the window to the wrong workspace.
 @MainActor
-private func resolveTerminalCwd(_ window: Window) async -> String? {
-    if let cwd = try? await window.cwd, !cwd.isEmpty { return cwd }
+func resolveTerminalCwd(_ window: Window) async -> String? {
+    if let cwd = try? await window.cwd, !cwd.isEmpty {
+        lastKnownTerminalCwd[window.windowId] = cwd
+        return cwd
+    }
     if let known = lastKnownTerminalCwd[window.windowId] { return known }
     let cutoff = Date.now.addingTimeInterval(-120)
     pendingSpawnedCwds.removeAll { $0.at < cutoff }
     guard !pendingSpawnedCwds.isEmpty else { return nil }
-    return pendingSpawnedCwds.removeFirst().cwd
+    let adopted = pendingSpawnedCwds.removeFirst().cwd
+    lastKnownTerminalCwd[window.windowId] = adopted
+    return adopted
 }
 
 @MainActor

@@ -74,6 +74,32 @@ It is gated by the `experimental-stacking-layout` config flag, which now
 `layoutTiles`/`layoutAccordion`) remains only as the dormant fallback when the
 flag is off; it is not mur's model.
 
+## Restore is workspace-aware
+
+macOS has no workspaces to read back, so at startup **every** window is
+registered into whichever workspace happens to be active. The workspace a
+window belongs to therefore only exists in mur's own memory
+(`WindowMemory` entries and `TerminalSession`s both store a workspace
+name), and `runCoordinatedRestore` must move each window to its
+remembered workspace. Any path that loses that name drops the window on
+the active workspace — the "windows jump back to the first workspace"
+bug. The three fallbacks all carry a workspace now:
+
+- a terminal is identified by **cwd**, resolved through
+  `resolveTerminalCwd` (never `window.cwd` alone): a session mur itself
+  relaunched runs `claude` directly, so no shell integration runs and
+  Ghostty never publishes `AXDocument` for it. Adoption of a spawn record
+  is sticky (written into `lastKnownTerminalCwd`) because several callers
+  ask and the record is consumed once;
+- a title miss falls back to the app's remembered cells
+  (`recallTiledByApp`), handed out **workspace-major** — ordering by cell
+  alone interleaves workspaces, since every workspace has a lane 0;
+- an unrecognised window with no cell left to hand out goes to
+  `dominantWorkspace(appId:)` — where that app lives — instead of staying
+  put. Startup batch only (`isStartupRestore`, the first coordinated
+  restore): a window opened later really is new, and belongs on the
+  workspace the user is looking at.
+
 ## Installing (`just install`)
 
 `just install` builds the debug bundle, installs it as

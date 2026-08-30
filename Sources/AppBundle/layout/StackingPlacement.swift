@@ -260,11 +260,21 @@ private func runCoordinatedRestore() async {
     let ids = pendingRestoreIds
     pendingRestoreIds = []
 
+    // The first coordinated restore IS the startup batch: every window that
+    // already existed is registered in one loop and debounced into a single
+    // run. Later runs are windows the user opened since.
+    let isStartupRestore = !didRunCoordinatedRestore
+    didRunCoordinatedRestore = true
+
     struct Tiled { let window: Window; let workspace: Workspace; let lane: Int; let slot: Int }
     /// Remembered cells still up for grabs, per app — see the fallback below.
     var appSpanPool: [String: [StoredWindowState]] = [:]
     var tiled: [Tiled] = []
     var floaters: [(window: Window, workspace: Workspace)] = []
+    /// Synthetic lanes for windows sent to their app's workspace without a
+    /// remembered cell: high enough to rank after every real lane.
+    let unrankedLaneBase = Int.max - 1000
+    var unrankedCount = 0
 
     for id in ids {
         guard let window = Window.get(byId: id), let curWs = window.nodeWorkspace else {
@@ -297,7 +307,14 @@ private func runCoordinatedRestore() async {
         var recalled = windowMemory.recall(appId: appId, title: title, shape: shape)
         if recalled == nil || recalled?.floating == false,
            sessionRestoreTerminalBundleIds.contains(appId),
-           let cwd = try? await window.cwd, !cwd.isEmpty,
+           // `resolveTerminalCwd`, not `window.cwd`: a session mur itself
+           // relaunched runs `claude` directly, so no shell integration runs
+           // and Ghostty NEVER publishes AXDocument for it. Asking the window
+           // alone leaves mur's own restored terminals unidentifiable — they
+           // miss their session, fall through to the heuristic, and land in
+           // whatever workspace happens to be active. Resolving through the
+           // spawn record hands them back their remembered workspace + cell.
+           let cwd = await resolveTerminalCwd(window),
            let session = terminalSessionStore.recall(cwd: cwd)
         {
             recalled = StoredWindowState(floating: false, span: session.span, workspace: session.workspace)
@@ -315,6 +332,34 @@ private func runCoordinatedRestore() async {
             }
         }
         guard let state = recalled else {
+            // mur — UNRECOGNISED, BUT NOT NECESSARILY NEW. On the startup
+            // batch every window was just registered into whichever
+            // workspace happened to be active (macOS has no workspaces to
+            // read back), so leaving an unrecognised window where it sits
+            // strands it there — that's the "windows jump back to the first
+            // workspace" symptom, and it hits exactly the windows mur can't
+            // key: an app that rewrote its title with no remembered cell
+            // left to hand out. Send it to the workspace its app lives in
+            // instead; `lane: .max` ranks it after the recognised windows,
+            // into the first free column there.
+            //
+            // Startup only. A window opened later really is new, and the
+            // user opened it on the workspace they're looking at.
+            if isStartupRestore,
+               let home = windowMemory.dominantWorkspace(appId: appId, shape: shape),
+               home != curWs.name
+            {
+                // Distinct synthetic lanes so two unrecognised windows get a
+                // column each instead of becoming two rows of one column.
+                tiled.append(Tiled(
+                    window: window,
+                    workspace: Workspace.get(byName: home),
+                    lane: unrankedLaneBase + min(unrankedCount, 999),
+                    slot: 0,
+                ))
+                unrankedCount += 1
+                continue
+            }
             // First-seen — keep the heuristic placement, remember it by title.
             if let span = curWs.stackingLayout.placements[id] {
                 windowMemory.remember(appId: appId, title: title, workspace: curWs.name, shape: shape, span: span)
@@ -423,6 +468,10 @@ private func runCoordinatedRestore() async {
 /// One-shot guard: relaunch missing terminal sessions only on the first
 /// (startup) coordinated restore, never on later window-open batches.
 @MainActor private var didAttemptSessionRelaunch = false
+
+/// One-shot guard: has a coordinated restore run yet? The first one is the
+/// startup batch — see `isStartupRestore` in `runCoordinatedRestore`.
+@MainActor private var didRunCoordinatedRestore = false
 
 // MARK: - Persisting window state
 
