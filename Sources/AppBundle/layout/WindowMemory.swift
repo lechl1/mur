@@ -120,6 +120,21 @@ final class WindowMemory {
         entries[shape]?[WindowMemoryKey(appId: appId, windowTitle: title)]
     }
 
+    /// mur — every TILED state remembered for `appId`, ordered by cell
+    /// (lane, then slot). Used as the fallback when the exact title misses:
+    /// plenty of apps rewrite their title as you use them (a browser shows
+    /// the current tab, a terminal shows the running command), so an
+    /// exact-title-only memory forgets those windows on every restart and
+    /// they land wherever the heuristic drops them. Handing this app's
+    /// windows its remembered cells in order keeps their relative layout
+    /// stable even when no single title matches.
+    func recallTiledByApp(appId: String, shape: LayoutShape) -> [StoredWindowState] {
+        (entries[shape] ?? [:])
+            .filter { $0.key.appId == appId && !$0.value.floating }
+            .map(\.value)
+            .sorted { ($0.span.lane0, $0.span.slot0) < ($1.span.lane0, $1.span.slot0) }
+    }
+
     // MARK: mutation
 
     /// Remember the window as TILED at `span` in `workspace`.

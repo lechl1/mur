@@ -51,6 +51,8 @@ struct StackingPlaceCommand: Command {
             let title = (try? await window.title) ?? ""
             windowMemory.remember(appId: appId, title: title, workspace: workspace.name, shape: shape, span: span)
             windowMemory.save()
+            // Siblings' slots shift with a move/resize too — sweep the layout.
+            persistWindowStateSoon()
         }
 
         return .succ

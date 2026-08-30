@@ -96,6 +96,8 @@ final class MacWindow: Window {
             }
         }
         forgetMinimizeState(of: windowId)
+        forgetPendingGridMount(windowId)
+        forgetTerminalSessionOnWindowClose(windowId)
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace

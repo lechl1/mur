@@ -70,6 +70,10 @@ enum GlobalObserver {
                         )
                         session.workspace.stackingLayout.place(session.windowId, at: target)
                     }
+                    // mur — a mouse drag/resize just changed the layout;
+                    // persist the new state (all windows, plus terminal
+                    // sessions) the same way a keyboard move does.
+                    persistWindowStateSoon()
                 }
                 try await resetManipulatedWithMouseIfPossible()
                 let mouseLocation = mouseLocation

@@ -141,6 +141,10 @@ extension Workspace {
         // mur — animate the whole set together (single shared clock → all
         // windows/columns in the move start and finish in lockstep).
         WindowAnimator.shared.animateBatch(animationBatch)
+        // mur — post-layout FILL PASS, once the animation has settled.
+        for item in animationBatch {
+            scheduleFillCheck(window: item.window, target: item.to, in: self)
+        }
         for window in children.filterIsInstance(of: Window.self) {
             window.lastAppliedLayoutPhysicalRect = nil
             window.lastAppliedLayoutVirtualRect = nil
@@ -307,5 +311,59 @@ extension TilingContainer {
                     )
             }
         }
+    }
+}
+
+// MARK: - Post-layout fill pass
+
+/// mur — a window doesn't always end up the size mur asked for. An app with
+/// a minimum width clamps a narrow column and keeps the size it had; others
+/// simply drop a resize that arrives while they're busy launching. Either
+/// way the window stops filling its column and leaves a gap beside it, which
+/// also throws off how centred the strip looks.
+///
+/// So: after the layout animation settles, compare the window's ACTUAL rect
+/// against the cell it was given and re-issue the frame if it doesn't fill
+/// it. Bounded by `fillRetryLimit` attempts per target so an app that
+/// physically cannot take the size isn't poked forever, and skipped for
+/// windows mur has already classified as non-resizable (those get floated).
+@MainActor private var fillAttempts: [WindowId: (target: Rect, count: Int)] = [:]
+private let fillRetryLimit = 2
+private let fillTolerance: CGFloat = 2
+
+@MainActor
+fileprivate func scheduleFillCheck(window: Window, target: Rect, in workspace: Workspace) {
+    let windowId = window.windowId
+    if workspace.stackingLayout.nonResizableWindows.contains(windowId) { return }
+    let previous = fillAttempts[windowId]
+    let sameTarget = previous.map {
+        abs($0.target.width - target.width) <= fillTolerance
+            && abs($0.target.height - target.height) <= fillTolerance
+            && abs($0.target.topLeftX - target.topLeftX) <= fillTolerance
+            && abs($0.target.topLeftY - target.topLeftY) <= fillTolerance
+    } ?? false
+    if sameTarget {
+        if (previous?.count ?? 0) >= fillRetryLimit { return }
+    } else {
+        fillAttempts[windowId] = (target, 0)
+    }
+    Task { @MainActor in
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        guard let window = Window.get(byId: windowId) else {
+            fillAttempts.removeValue(forKey: windowId)
+            return
+        }
+        // Mid-flight or under the mouse: not our rect to judge.
+        if WindowAnimator.shared.isDrivingFrame(windowId) { return }
+        if windowId == currentlyManipulatedWithMouseWindowId { return }
+        guard let actual = try? await window.getAxRect() else { return }
+        let fills = abs(actual.width - target.width) <= fillTolerance
+            && abs(actual.height - target.height) <= fillTolerance
+        if fills {
+            fillAttempts[windowId] = (target, fillRetryLimit) // settled; stop retrying
+            return
+        }
+        fillAttempts[windowId] = (target, (fillAttempts[windowId]?.count ?? 0) + 1)
+        window.setAxFrame(target.topLeftCorner, target.size)
     }
 }

@@ -40,6 +40,8 @@ func resetManipulatedWithMouseIfPossible() async throws {
             workspace.resetResizeWeightBeforeResizeRecursive()
         }
         scheduleCancellableCompleteRefreshSession(.resetManipulatedWithMouse, optimisticallyPreLayoutWorkspaces: true)
+        // mur — the drag is over: persist where everything ended up.
+        persistWindowStateSoon()
     }
 }
 

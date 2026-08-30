@@ -17,6 +17,23 @@ struct StackingLayoutTest {
         #expect(LayoutOrientation.forMonitor(width: 1000, height: 1000) == .landscape)
     }
 
+    // MARK: one window per cell
+
+    @Test func placeIntoOccupiedCellInsertsInsteadOfOverlapping() {
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(WindowId(1), at: .single(lane: 0, slot: 0))
+        layout.place(WindowId(2), at: .single(lane: 0, slot: 1))
+        // Land squarely on the occupied top cell: the occupants shift down,
+        // nobody ends up sharing a cell (which would render as one window
+        // exactly on top of another).
+        layout.place(WindowId(3), at: .single(lane: 0, slot: 0))
+        #expect(layout.placements[WindowId(3)] == .single(lane: 0, slot: 0))
+        #expect(layout.placements[WindowId(1)] == .single(lane: 0, slot: 1))
+        #expect(layout.placements[WindowId(2)] == .single(lane: 0, slot: 2))
+        let cells = layout.placements.values.map { TileSpan(lane0: $0.lane0, lane1: $0.lane1, slot0: $0.slot0, slot1: $0.slot1) }
+        #expect(Set(cells).count == cells.count)
+    }
+
     // MARK: per-lane slot counts (the user's "left col 4 rows, right col 3" requirement)
 
     @Test func laneSlotCountsAreIndependent() {

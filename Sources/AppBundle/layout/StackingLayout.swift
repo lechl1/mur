@@ -148,6 +148,29 @@ final class StackingLayout {
         let oldSlotCountInTargetLane = oldUsedLanes.contains(requested.lane0)
             ? slotCount(in: requested.lane0) : 0
 
+        // mur — ONE WINDOW PER CELL. If another window already occupies the
+        // requested cell, push it — and everything below it in that lane —
+        // down a slot so the newcomer INSERTS instead of landing exactly on
+        // top. Two windows sharing a cell get identical rects and render as
+        // one window swallowing the other: that's the "new window jumps and
+        // overlaps the one that was there" symptom. Callers that compute a
+        // free slot themselves are unaffected (nothing to shift).
+        let collides = placements.contains { id, span in
+            id != windowId
+                && span.lane0 <= requested.lane1 && requested.lane0 <= span.lane1
+                && span.slot0 <= requested.slot1 && requested.slot0 <= span.slot1
+        }
+        if collides {
+            for (id, span) in placements where id != windowId
+                && span.lane0 <= requested.lane1 && requested.lane0 <= span.lane1
+                && span.slot1 >= requested.slot0
+            {
+                placements[id] = TileSpan(
+                    lane0: span.lane0, lane1: span.lane1,
+                    slot0: span.slot0 + 1, slot1: span.slot1 + 1,
+                )
+            }
+        }
         placements[windowId] = requested
         for lane in requested.lane0...requested.lane1 {
             ensureSlotWeightsCapacity(lane: lane, upTo: requested.slot1)

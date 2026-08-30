@@ -115,6 +115,49 @@ func tryRegisterInStackingLayout(_ window: Window) {
             break
     }
 
+    // mur — FLOAT FIRST, MOUNT A BEAT LATER. A window that opens while mur
+    // is already running is left floating exactly where the app put it, and
+    // joins the grid from `runCoordinatedRestore` ~90ms later. Mounting it
+    // synchronously here means placing it from the sync heuristic (no title
+    // available yet), then moving it AGAIN when the async restore reads the
+    // title and finds its remembered cell — the double hop is the visible
+    // "new window jumps across the screen and lands on top of another one".
+    // Deferring collapses that into a single move from the opening position.
+    // Startup is exempt: every existing window is registered in one batch
+    // there, and floating them all first would just churn the whole screen.
+    if !isStartup, case .tilingContainer? = window.parent?.cases {
+        pendingGridMountIds.insert(window.windowId)
+        window.bindAsFloatingWindow(to: workspace)
+        return
+    }
+    mountInStackingLayout(window, in: workspace)
+}
+
+/// mur — windows that opened while mur was running and are waiting to be
+/// mounted into the grid by the next coordinated restore. They're bound as
+/// floating windows meanwhile, so they render where the app opened them.
+@MainActor private var pendingGridMountIds: Set<WindowId> = []
+
+/// Forget a pending mount (the window died before the restore ran).
+@MainActor
+func forgetPendingGridMount(_ windowId: WindowId) {
+    pendingGridMountIds.remove(windowId)
+}
+
+/// mur — mount a deferred window into the grid: rebind it to the tiling
+/// container it would have been in, then run the regular placement. Returns
+/// `false` if this window wasn't deferred (nothing to do).
+@MainActor
+private func flushPendingGridMount(_ window: Window, in workspace: Workspace) -> Bool {
+    guard pendingGridMountIds.remove(window.windowId) != nil else { return false }
+    window.bind(to: workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+    mountInStackingLayout(window, in: workspace)
+    return true
+}
+
+/// The placement decision itself — see `tryRegisterInStackingLayout`.
+@MainActor
+private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
     // IMPORTANT: this runs from MacWindow.getOrRegister during startup
     // heavy refresh, when EVERY existing window is processed. Any AX
     // call we make here can block the entire daemon if a single app's
@@ -218,20 +261,60 @@ private func runCoordinatedRestore() async {
     pendingRestoreIds = []
 
     struct Tiled { let window: Window; let workspace: Workspace; let lane: Int; let slot: Int }
+    /// Remembered cells still up for grabs, per app — see the fallback below.
+    var appSpanPool: [String: [StoredWindowState]] = [:]
     var tiled: [Tiled] = []
     var floaters: [(window: Window, workspace: Workspace)] = []
 
     for id in ids {
-        guard let window = Window.get(byId: id), let curWs = window.nodeWorkspace else { continue }
+        guard let window = Window.get(byId: id), let curWs = window.nodeWorkspace else {
+            forgetPendingGridMount(id)
+            continue
+        }
+        // mur — a window that opened while mur was running has been floating
+        // where the app put it since registration; mount it into the grid
+        // now, and seed its last-applied rect with that opening position so
+        // the spring animation carries it into its cell instead of the
+        // animator treating this as a first placement and snapping.
+        if flushPendingGridMount(window, in: curWs) {
+            if let opening = try? await window.getAxRect() {
+                window.lastAppliedLayoutPhysicalRect = opening
+            }
+        }
         let appId = window.app.rawAppBundleId ?? ""
-        // NB: terminals are NOT restored by cwd here — several terminals can
-        // share one cwd (e.g. multiple claude sessions in the same repo), so
-        // a cwd key would collapse them all into one column. They fall
-        // through to the title/heuristic path, keeping distinct columns. The
-        // cwd is used only for RELAUNCH (spawning missing sessions).
         let title = (try? await window.title) ?? ""
         let shape = curWs.stackingLayout.shape
-        guard let state = windowMemory.recall(appId: appId, title: title, shape: shape) else {
+        // mur — A TERMINAL'S TITLE IS NOT AN IDENTITY. Ghostty (with shell
+        // integration, and claude on top of it) rewrites the title as work
+        // progresses — "◐ Empty columns cleanup" one minute, something else
+        // the next — so title-keyed memory misses on almost every restart
+        // and the window lands wherever the heuristic puts it: the "windows
+        // keep changing position after restore" symptom. The cwd is stable
+        // across restarts, so for terminals prefer the remembered session's
+        // span. Two terminals in the same cwd resolve to the same cell and
+        // become two ROWS of that column (`place` inserts, never overlaps),
+        // which is what sharing a repo should look like anyway.
+        var recalled = windowMemory.recall(appId: appId, title: title, shape: shape)
+        if recalled == nil || recalled?.floating == false,
+           sessionRestoreTerminalBundleIds.contains(appId),
+           let cwd = try? await window.cwd, !cwd.isEmpty,
+           let session = terminalSessionStore.recall(cwd: cwd)
+        {
+            recalled = StoredWindowState(floating: false, span: session.span, workspace: session.workspace)
+        }
+        // Title miss and no terminal session: fall back to this app's
+        // remembered cells, handed out in order so N windows of one app
+        // keep their relative columns instead of scattering.
+        if recalled == nil {
+            let pool = appSpanPool[appId] ?? windowMemory.recallTiledByApp(appId: appId, shape: shape)
+            if let next = pool.first {
+                appSpanPool[appId] = Array(pool.dropFirst())
+                recalled = next
+            } else {
+                appSpanPool[appId] = []
+            }
+        }
+        guard let state = recalled else {
             // First-seen — keep the heuristic placement, remember it by title.
             if let span = curWs.stackingLayout.placements[id] {
                 windowMemory.remember(appId: appId, title: title, workspace: curWs.name, shape: shape, span: span)
@@ -266,14 +349,45 @@ private func runCoordinatedRestore() async {
         // stacking in the first column). Ascending placement keeps every
         // just-placed column adjacent to the previous one, so compaction is a
         // no-op and the ranks are preserved.
-        let laneRank = Dictionary(uniqueKeysWithValues:
-            Set(group.map { $0.lane }).sorted().enumerated().map { ($1, $0) })
+        //
+        // mur — rank against the CURRENT layout, not just this group. At
+        // startup the grid is empty after the detach above, so the free
+        // lanes are 0,1,2… and this is the historical behaviour. Later —
+        // one window opening into a workspace that already has columns —
+        // ranking to 0-based columns would drop the newcomer on top of a
+        // window that was already there. Take the first lane that is
+        // actually free instead.
+        var taken = Set(layout.usedLanes)
+        var laneRank: [Int: Int] = [:]
+        for lane in Set(group.map { $0.lane }).sorted() {
+            var column = (0..<layout.shape.lanes).first { !taken.contains($0) }
+            if column == nil { column = layout.appendLane() }
+            taken.insert(column!)
+            laneRank[lane] = column!
+        }
         let byLane = Dictionary(grouping: group, by: { $0.lane })
         for lane in byLane.keys.sorted() {
             let column = laneRank[lane] ?? 0
             for (row, t) in byLane[lane]!.sorted(by: { $0.slot < $1.slot }).enumerated() {
                 layout.place(t.window.windowId, at: .single(lane: column, slot: row))
             }
+        }
+        // mur — reset every column to its natural width. `place()` rebalances
+        // lane weights as each window arrives, and that drift COMPOUNDS over
+        // restarts (each restore re-places everything) until the columns
+        // render as slivers — 9% of the screen for a terminal, and counting.
+        // Widths aren't persisted, so a restore is exactly the moment to
+        // start from the defaults again: a terminal column at its fixed
+        // fraction, everything else at the default column width.
+        for lane in layout.usedLanes {
+            let hasTerminal = layout.placements.contains { id, span in
+                span.lane0 <= lane && lane <= span.lane1
+                    && recognizedTerminalBundleIds.contains(Window.get(byId: id)?.app.rawAppBundleId ?? "")
+            }
+            layout.setLaneAbsoluteWidth(
+                hasTerminal ? terminalLaneFraction(for: workspace.workspaceMonitor) : StackingLayout.defaultColumnWidth,
+                lane: lane,
+            )
         }
     }
 
@@ -295,11 +409,9 @@ private func runCoordinatedRestore() async {
     // Record/refresh each terminal's session (cwd + position + claude) so a
     // future restart can restore — and, once, relaunch any saved session
     // whose window is gone (gated by experimental-session-restore).
-    for id in ids {
-        if let window = Window.get(byId: id), let ws = window.nodeWorkspace {
-            captureTerminalSession(window, in: ws)
-        }
-    }
+    // Persist the whole layout (and every terminal's session) on a short
+    // ladder — a window that just opened publishes its cwd late.
+    persistWindowStateAfterOpen()
     if !didAttemptSessionRelaunch {
         didAttemptSessionRelaunch = true
         relaunchMissingTerminalSessions()
@@ -311,3 +423,74 @@ private func runCoordinatedRestore() async {
 /// One-shot guard: relaunch missing terminal sessions only on the first
 /// (startup) coordinated restore, never on later window-open batches.
 @MainActor private var didAttemptSessionRelaunch = false
+
+// MARK: - Persisting window state
+
+/// mur — persist EVERYTHING mur needs to rebuild this screen after a
+/// restart: each tiled window's cell and each floating window's mode
+/// (`WindowMemory`, keyed by app + title), plus each terminal's session
+/// (cwd + span, `TerminalSessionStore`).
+///
+/// Individual commands remember the window they acted on, but a move or a
+/// resize renumbers the SIBLINGS' slots too, and a window that just opened
+/// can't report its cwd yet. Sweeping the whole layout — after windows open
+/// and after every move — keeps the on-disk state matching the screen
+/// instead of drifting from it.
+@MainActor private var persistWindowStateTask: Task<Void, Never>?
+
+/// Debounced full sweep. Safe to call from every command; the last call in
+/// a burst wins.
+@MainActor
+func persistWindowStateSoon() {
+    persistWindowStateTask?.cancel()
+    persistWindowStateTask = Task { @MainActor in
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        if Task.isCancelled { return }
+        await persistWindowStateNow()
+    }
+}
+
+/// Same sweep, repeated on a short ladder. Used right after windows open:
+/// a freshly-spawned terminal publishes its cwd (`AXDocument`) well after
+/// the window itself exists, so one immediate pass would record the window
+/// but not its session — and a session mur never recorded is a session it
+/// can't restore, or worse, one it relaunches a duplicate of.
+@MainActor
+func persistWindowStateAfterOpen() {
+    persistWindowStateTask?.cancel()
+    persistWindowStateTask = Task { @MainActor in
+        for delaySeconds in [1.0, 5.0, 15.0] {
+            try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+            if Task.isCancelled { return }
+            await persistWindowStateNow()
+        }
+    }
+}
+
+@MainActor
+func persistWindowStateNow() async {
+    for workspace in Workspace.all {
+        let layout = workspace.stackingLayout
+        for (windowId, span) in layout.placements {
+            guard let window = Window.get(byId: windowId) else { continue }
+            let title = (try? await window.title) ?? ""
+            windowMemory.remember(
+                appId: window.app.rawAppBundleId ?? "", title: title,
+                workspace: workspace.name, shape: layout.shape, span: span,
+            )
+        }
+        for window in workspace.children.filterIsInstance(of: Window.self) {
+            // A window waiting for its deferred grid mount is floating only
+            // for the next few frames — recording that would restore it
+            // floating forever.
+            if pendingGridMountIds.contains(window.windowId) { continue }
+            let title = (try? await window.title) ?? ""
+            windowMemory.rememberFloating(
+                appId: window.app.rawAppBundleId ?? "", title: title,
+                workspace: workspace.name, shape: layout.shape,
+            )
+        }
+    }
+    windowMemory.save()
+    await captureAllTerminalSessions()
+}

@@ -51,6 +51,8 @@ struct StackingFloatCommand: Command {
             // window as floating rather than re-tiling it.
             windowMemory.rememberFloating(appId: appId, title: title, workspace: workspace.name, shape: layout.shape)
             windowMemory.save()
+            // Siblings' slots shift with a move/resize too — sweep the layout.
+            persistWindowStateSoon()
         }
         return .succ
     }
