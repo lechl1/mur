@@ -144,6 +144,14 @@ final class WindowMemory {
             }
     }
 
+    /// How many TILED windows are remembered in total, across every shape.
+    /// The restore uses it as the count of windows still to be steered: once
+    /// that many have been claimed there is nothing left to restore, so
+    /// restore mode can end before its deadline.
+    func tiledEntryCount() -> Int {
+        entries.values.reduce(0) { $0 + $1.values.count { !$0.floating } }
+    }
+
     /// mur — the workspace this app's windows are remembered in, or `nil` if
     /// nothing is remembered for it. Ties (an app spread over several
     /// workspaces) break towards the workspace holding the most of its

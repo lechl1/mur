@@ -96,9 +96,28 @@ bug. The three fallbacks all carry a workspace now:
   alone interleaves workspaces, since every workspace has a lane 0;
 - an unrecognised window with no cell left to hand out goes to
   `dominantWorkspace(appId:)` — where that app lives — instead of staying
-  put. Startup batch only (`isStartupRestore`, the first coordinated
-  restore): a window opened later really is new, and belongs on the
-  workspace the user is looking at.
+  put. Restore mode only: a window opened later really is new, and belongs
+  on the workspace the user is looking at.
+
+**Restore is a window of time, not one batch** (naru's `RESTORE_SETTLE`).
+The coordinated restore is debounced 90ms, which catches every window that
+already existed — but not the ones mur is *waiting* for: a terminal mur
+relaunches takes seconds to map, a browser reopening tabs longer. So
+restore mode stays on for `restoreSettle` (60s) and ends early once every
+remembered window has been claimed (`unclaimedRestoreEntries`).
+
+## Restoring a claude session
+
+A restored terminal is relaunched with `claude --resume <session-id>`, not
+a bare `--resume` — which opens the interactive session PICKER and leaves
+every restored terminal sitting at a chooser. The id is resolved
+(`claudeSessionId(forCwd:)`, ported from naru's `session/claude.rs`) from
+`~/.claude/projects/<encoded-cwd>/<id>.jsonl`, newest transcript first,
+where the encoding replaces every non-alphanumeric character with `-`.
+That encoding is **lossy** (`/a/b` and `/a.b` both give `-a-b`), so a
+candidate is confirmed against the `cwd` recorded inside the transcript
+before its id is trusted. Transcripts run to megabytes; only a bounded
+head is read.
 
 ## Installing (`just install`)
 

@@ -260,11 +260,22 @@ private func runCoordinatedRestore() async {
     let ids = pendingRestoreIds
     pendingRestoreIds = []
 
-    // The first coordinated restore IS the startup batch: every window that
-    // already existed is registered in one loop and debounced into a single
-    // run. Later runs are windows the user opened since.
-    let isStartupRestore = !didRunCoordinatedRestore
-    didRunCoordinatedRestore = true
+    // mur — RESTORE IS A WINDOW OF TIME, NOT ONE BATCH (naru's
+    // `RESTORE_SETTLE`). The first coordinated restore is the startup batch —
+    // every pre-existing window registered in one loop, debounced into a
+    // single run — but the windows mur is *waiting* for map much later: the
+    // terminals mur itself relaunches take seconds to appear, and a browser
+    // reopening its tabs can be slower still. Treating only the first batch
+    // as "startup" strands every one of those on whatever workspace happened
+    // to be active. So restore mode stays on for `restoreSettle` after the
+    // first batch, and ends early once every remembered window has been
+    // claimed (nothing left to steer).
+    if restoreModeDeadline == nil {
+        restoreModeDeadline = Date.now.addingTimeInterval(restoreSettle)
+        unclaimedRestoreEntries = windowMemory.tiledEntryCount()
+    }
+    let isStartupRestore = unclaimedRestoreEntries > 0
+        && Date.now < (restoreModeDeadline ?? .distantPast)
 
     struct Tiled { let window: Window; let workspace: Workspace; let lane: Int; let slot: Int }
     /// Remembered cells still up for grabs, per app — see the fallback below.
@@ -366,6 +377,9 @@ private func runCoordinatedRestore() async {
             }
             continue
         }
+        // Claimed one of the remembered windows — restore mode ends as soon
+        // as there are none left to steer, without waiting out `restoreSettle`.
+        unclaimedRestoreEntries -= 1
         let targetWs = (!state.workspace.isEmpty && state.workspace != curWs.name)
             ? Workspace.get(byName: state.workspace) : curWs
         if state.floating {
@@ -469,9 +483,19 @@ private func runCoordinatedRestore() async {
 /// (startup) coordinated restore, never on later window-open batches.
 @MainActor private var didAttemptSessionRelaunch = false
 
-/// One-shot guard: has a coordinated restore run yet? The first one is the
-/// startup batch — see `isStartupRestore` in `runCoordinatedRestore`.
-@MainActor private var didRunCoordinatedRestore = false
+/// mur — how long after the first coordinated restore a window that maps is
+/// still treated as part of the restore rather than as one the user just
+/// opened. Ported from naru's `RESTORE_SETTLE`: generous, because the
+/// windows mur is waiting for are the slow ones — a terminal mur relaunched
+/// with `claude --resume`, a browser reopening a session of tabs.
+@MainActor let restoreSettle: TimeInterval = 60
+
+/// When restore mode ends, and how many remembered windows are still
+/// unclaimed. `nil` deadline = no coordinated restore has run yet. Restore
+/// mode is over at the deadline OR once nothing is left to steer, whichever
+/// comes first — see `isStartupRestore` in `runCoordinatedRestore`.
+@MainActor private var restoreModeDeadline: Date?
+@MainActor private var unclaimedRestoreEntries = 0
 
 // MARK: - Persisting window state
 

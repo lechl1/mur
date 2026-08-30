@@ -27,8 +27,14 @@ struct TerminalSession: Codable, Equatable {
     let lane1: Int
     let slot0: Int
     let slot1: Int
+    /// The Claude Code conversation this terminal was running, as its
+    /// transcript id. `nil` for shells and for a claude whose transcript
+    /// mur couldn't resolve — a plain `claude --resume` (the picker) is the
+    /// fallback then. Optional in the on-disk format, so files written
+    /// before this field load fine.
+    let claudeSessionId: String?
 
-    init(cwd: String, kind: Kind, workspace: String, span: TileSpan) {
+    init(cwd: String, kind: Kind, workspace: String, span: TileSpan, claudeSessionId: String? = nil) {
         self.cwd = cwd
         self.kind = kind
         self.workspace = workspace
@@ -36,6 +42,7 @@ struct TerminalSession: Codable, Equatable {
         self.lane1 = span.lane1
         self.slot0 = span.slot0
         self.slot1 = span.slot1
+        self.claudeSessionId = claudeSessionId
     }
 
     var span: TileSpan { TileSpan(lane0: lane0, lane1: lane1, slot0: slot0, slot1: slot1) }
@@ -105,7 +112,10 @@ func captureTerminalSession(_ window: Window, in workspace: Workspace) {
               let span = workspace.stackingLayout.placements[windowId] else { return }
         let kind: TerminalSession.Kind = await claudeCwds().contains(cwd) ? .claude : .shell
         lastKnownTerminalCwd[windowId] = cwd
-        terminalSessionStore.remember(TerminalSession(cwd: cwd, kind: kind, workspace: workspace.name, span: span))
+        terminalSessionStore.remember(TerminalSession(
+            cwd: cwd, kind: kind, workspace: workspace.name, span: span,
+            claudeSessionId: kind == .claude ? await claudeSessionId(forCwd: cwd) : nil,
+        ))
         terminalSessionStore.save()
     }
 }
@@ -123,11 +133,19 @@ func captureAllTerminalSessions() async {
             guard sessionRestoreTerminalBundleIds.contains(window.app.rawAppBundleId ?? "") else { continue }
             guard let cwd = await resolveTerminalCwd(window) else { continue }
             lastKnownTerminalCwd[windowId] = cwd
+            let kind: TerminalSession.Kind = claude.contains(cwd) ? .claude : .shell
+            // Keep the id mur already has if the transcript can't be resolved
+            // right now (a claude that just started hasn't written one yet) —
+            // dropping it would downgrade the next restore to the picker.
+            let sessionId = kind == .claude
+                ? await claudeSessionId(forCwd: cwd) ?? terminalSessionStore.recall(cwd: cwd)?.claudeSessionId
+                : nil
             terminalSessionStore.remember(TerminalSession(
                 cwd: cwd,
-                kind: claude.contains(cwd) ? .claude : .shell,
+                kind: kind,
                 workspace: workspace.name,
                 span: span,
+                claudeSessionId: sessionId,
             ))
         }
     }
@@ -247,12 +265,77 @@ func resolveTerminalCwd(_ window: Window) async -> String? {
 @MainActor
 private func spawnTerminalSession(_ session: TerminalSession) {
     pendingSpawnedCwds.append((cwd: session.cwd, at: .now))
-    let argv = (session.kind == .claude ? sessionRestoreClaudeArgv : sessionRestoreShellArgv)
-        .map { $0.replacingOccurrences(of: "%CWD%", with: session.cwd) }
+    var template = session.kind == .claude ? sessionRestoreClaudeArgv : sessionRestoreShellArgv
+    // Resume THE conversation, not the picker: a bare `claude --resume`
+    // reopens the terminal sitting at the interactive session chooser.
+    if session.kind == .claude, let id = session.claudeSessionId,
+       let resumeIdx = template.firstIndex(of: "--resume")
+    {
+        template.insert(id, at: template.index(after: resumeIdx))
+    }
+    let argv = template.map { $0.replacingOccurrences(of: "%CWD%", with: session.cwd) }
     let process = Process()
     process.executableURL = URL(filePath: "/usr/bin/open")
     process.arguments = ["-na", sessionRestoreGhosttyAppPath, "--args"] + argv
     _ = try? process.run()
+}
+
+/// Where Claude Code keeps its per-directory transcripts.
+let claudeProjectsDir: URL = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent(".claude/projects", isDirectory: true)
+
+/// mur — the resumable Claude Code conversation running in `cwd`, as its
+/// transcript id (ported from naru's `session/claude.rs`).
+///
+/// Claude Code persists each conversation to
+/// `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, where the encoding
+/// replaces every non-alphanumeric character with `-`. The newest transcript
+/// is the live conversation. The encoding is LOSSY — `/a/b` and `/a.b` both
+/// encode to `-a-b` — so a candidate is confirmed against the `cwd` recorded
+/// inside the transcript before its id is trusted.
+///
+/// Worth the trouble because a bare `claude --resume` opens the interactive
+/// session PICKER: without the id, every restored terminal comes back
+/// sitting at a chooser instead of in the conversation it was in.
+func claudeSessionId(forCwd cwd: String, projectsDir: URL = claudeProjectsDir) async -> String? {
+    await Task.detached { () -> String? in
+        let encoded = String(cwd.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        let dir = projectsDir.appendingPathComponent(encoded, isDirectory: true)
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey],
+        ) else { return nil }
+        let transcripts = files
+            .filter { $0.pathExtension == "jsonl" }
+            .compactMap { url -> (Date, URL)? in
+                guard let date = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+                    .contentModificationDate else { return nil }
+                return (date, url)
+            }
+            .sorted { $0.0 > $1.0 } // newest first — the live conversation
+        for (_, url) in transcripts where transcriptCwd(url) == cwd {
+            return url.deletingPathExtension().lastPathComponent
+        }
+        return nil
+    }.value
+}
+
+/// The working directory a transcript was recorded in, from the `cwd` field
+/// of its JSONL records. The leading records are session metadata that carry
+/// no `cwd`, so a bounded prefix is scanned.
+private func transcriptCwd(_ url: URL) -> String? {
+    guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+    defer { try? handle.close() }
+    // The cwd-carrying record shows up within the first handful of lines
+    // (line 5 in practice), but a single record can be large, and a
+    // transcript runs to megabytes — so read a bounded head, not the file.
+    guard let head = try? handle.read(upToCount: 1_048_576) else { return nil }
+    for line in String(decoding: head, as: UTF8.self).split(separator: "\n").prefix(64) {
+        guard let data = line.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let cwd = obj["cwd"] as? String else { continue }
+        return cwd
+    }
+    return nil
 }
 
 /// Set of working directories that currently have a `claude` process, read
