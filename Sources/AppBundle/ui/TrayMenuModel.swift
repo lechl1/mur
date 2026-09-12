@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import Common
 
 public final class TrayMenuModel: ObservableObject {
@@ -15,9 +16,21 @@ public final class TrayMenuModel: ObservableObject {
     @Published var sponsorshipMessage: String = sponsorshipPrompts.randomElement().orDie()
 }
 
+/// mur — when macOS has not granted Accessibility to THIS bundle, mur is
+/// inert: it sees no windows and every hotkey it registers runs a command
+/// that can't touch anything. That used to fail silently — the only notice
+/// was a `print` nobody reads when the app is launched from Finder, which
+/// is exactly how it is launched in normal use. The menu bar is the one
+/// surface that is always visible, so say it there.
 @MainActor func updateTrayText() {
     let sortedMonitors = sortedMonitors
     let focus = focus
+    guard AXIsProcessTrusted() else {
+        TrayMenuModel.shared.trayText = "⚠️ mur: grant Accessibility"
+        TrayMenuModel.shared.trayItems = []
+        TrayMenuModel.shared.workspaces = []
+        return
+    }
     TrayMenuModel.shared.trayText = (activeMode?.takeIf { $0 != mainModeId }?.first.map { "(\($0.uppercased())) " } ?? "") +
         sortedMonitors
         .map {

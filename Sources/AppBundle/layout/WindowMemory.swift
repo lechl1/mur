@@ -204,6 +204,9 @@ final class WindowMemory {
         let entries: [Keyed]
     }
     private struct Keyed: Codable {
+        // periphery:ignore - read in `load()` (`byShape[keyed.key] = …`).
+        // Periphery's assign-only-property heuristic misses the read
+        // because the value is reached through a decoded aggregate.
         let key: WindowMemoryKey
         let entry: WindowMemoryEntry
     }

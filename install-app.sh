@@ -102,10 +102,29 @@ $icon_key
 </plist>
 EOF
 
-# Ad-hoc signature. mur reads other apps' windows through the
-# Accessibility API, and macOS refuses to hand out that permission to an
-# unsigned bundle.
-codesign --force --deep --sign - "$DEST" > /dev/null 2>&1 || true
+# Signature. mur reads other apps' windows through the Accessibility API,
+# and macOS refuses to hand out that permission to an unsigned bundle.
+#
+# WHICH identity matters more than it looks. An ad-hoc signature (`-`) has
+# no stable designated requirement, so TCC remembers the grant by the
+# binary's cdhash — which changes on EVERY build. The result is that each
+# `just install` silently revokes Accessibility: mur comes back up seeing
+# zero windows, with hotkeys that register and then do nothing.
+#
+# A self-signed certificate fixes that: the requirement is then "this
+# bundle id, signed by this cert", which survives rebuilds. Set
+# MUR_CODESIGN_IDENTITY, or create one named `mur-dev` (Keychain Access →
+# Certificate Assistant → Create a Certificate…, type "Code Signing",
+# self-signed) and it is picked up automatically.
+identity="${MUR_CODESIGN_IDENTITY:-}"
+if [ -z "$identity" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q '"mur-dev"'; then
+    identity="mur-dev"
+fi
+codesign --force --deep --sign "${identity:--}" "$DEST" > /dev/null 2>&1 || true
+if [ -z "$identity" ]; then
+    echo "ℹ️  Signed ad-hoc: this build must be re-granted Accessibility."
+    echo "   A self-signed 'mur-dev' certificate would make the grant stick."
+fi
 
 # Tell LaunchServices about the bundle right away, so Spotlight and
 # Finder see it (and pick up the new icon) without waiting for a rescan.

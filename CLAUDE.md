@@ -185,6 +185,25 @@ computer" prompt even if `.debug/MurApp.app` was already approved — until
 it's granted, hotkeys register but the commands they run do nothing.
 `just install` prints that reminder. `just uninstall` removes both.
 
+**A missing grant looks exactly like a broken layout engine.** With no
+Accessibility, `mur list-windows --all` prints nothing, no window ever
+tiles, and every hotkey is inert — nothing in that picture points at
+permissions. Check the window list FIRST when mur "stops working": empty
+means TCC, not layout. The confusing part is that launching the binary
+from a terminal inherits *that terminal's* grant, so the same build works
+from the shell and is dead when launched from Finder or launchd.
+
+An ad-hoc signature has no stable designated requirement, so TCC keys the
+grant to the binary's cdhash and **every `just install` revokes it**. Set
+`MUR_CODESIGN_IDENTITY`, or create a self-signed code-signing certificate
+named `mur-dev` (Keychain Access → Certificate Assistant), and
+`install-app.sh` signs with it instead — then the grant survives rebuilds.
+
+When mur is untrusted the menu-bar item reads
+`⚠️ mur: grant Accessibility` instead of the workspace list
+(`updateTrayText`), because the old signal was a `print` that nobody sees
+when the app was launched from Finder.
+
 ## Restarting the daemon after a debug build
 
 After `bash build-debug.sh`, restart the running daemon by killing it and
@@ -221,10 +240,23 @@ new identity on every rebuild, which can require re-approving it.
 
 ## Building
 
-The project requires Swift 6.2. The system default `swift` is 5.10, so
-export the toolchain before running the build script:
+Build with **`just build`** (or `just install`, which calls it). It strips
+swiftly from `PATH` and unsets `TOOLCHAINS`, so the build runs on Xcode's
+default Swift — currently 6.3.3, comfortably past the 6.2 the package
+needs. `build-debug.sh` on its own routes `swift` through
+`swiftly run swift`, which obeys the checked-in `.swift-version`
+(`6.3.0`); swiftly has no toolchains installed here, so that path fails
+with "doesn't match any of the installed toolchains".
+
+Do **not** build with `TOOLCHAINS=org.swift.6200202509111a` (older advice
+that used to live here, from when the default `swift` was 5.10). It works
+in isolation, but the 6.2 modules it leaves in `.build` are then rejected
+by the 6.3.3 compiler `just build` uses — "module compiled with Swift 6.2
+cannot be imported" — and the only way out is `rm -rf .build`.
+
+`bash swift-test.sh` and `bash lint.sh` need the same treatment as
+`just build`:
 
 ```bash
-export TOOLCHAINS=org.swift.6200202509111a
-bash build-debug.sh
+export PATH="$(echo "$PATH" | tr ':' '\n' | grep -v '/.swiftly/' | paste -sd: -)"
 ```
