@@ -71,7 +71,7 @@ final class MacApp: AbstractApp {
                 $axTaskLocalAppThreadToken.withValue(AxAppThreadToken(pid: pid, idForDebug: nsApp.idForDebug)) {
                     let axApp = AXUIElementCreateApplication(nsApp.processIdentifier)
                     let handlers: HandlerToNotifKeyMapping = unsafe [
-                        (refreshObs, [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification]),
+                        (refreshObs, [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification, kAXUIElementDestroyedNotification]),
                     ]
                     let job = RunLoopJob()
                     let subscriptions = (try? unsafe AxSubscription.bulkSubscribe(nsApp, axApp, job, handlers)) ?? []
@@ -283,8 +283,7 @@ final class MacApp: AbstractApp {
         return try await withThrowingTaskGroup(of: (pid_t, [UInt32]).self, returning: [MacApp: [UInt32]].self) { group in
             func refreshTheApp(_ nsApp: NSRunningApplication) {
                 group.addTask { @Sendable @MainActor in
-                    guard let app = try await MacApp.getOrRegister(nsApp) else { return (nsApp.processIdentifier, []) }
-                    return (nsApp.processIdentifier, try await app.refreshAndGetAliveWindowIds(frontmostAppBundleId: frontmostAppBundleId))
+                    try await refreshOneApp(nsApp, frontmostAppBundleId: frontmostAppBundleId)
                 }
             }
             // Register new apps
@@ -313,7 +312,7 @@ final class MacApp: AbstractApp {
         }
     }
 
-    private func refreshAndGetAliveWindowIds(frontmostAppBundleId: String?) async throws -> [UInt32] {
+    fileprivate func refreshAndGetAliveWindowIds(frontmostAppBundleId: String?) async throws -> [UInt32] {
         if nsApp.isTerminated {
             await destroy()
             return []
@@ -471,4 +470,65 @@ private func disableAnimations<T>(app: AXUIElement, _ job: RunLoopJob, _ body: (
     }
     try job.checkCancellation()
     return try body()
+}
+
+/// mur — how long one app gets to answer the per-refresh AX query before
+/// the refresh moves on without it (see `withAxDeadline`). Generous
+/// enough for a browser mid-startup, short enough that a wedged app costs
+/// one beat rather than every future refresh.
+private let appRefreshDeadline: UInt64 = 2_000_000_000
+
+/// How long an app that missed the deadline is skipped outright before
+/// mur probes it again. Without this, one wedged app adds
+/// `appRefreshDeadline` to EVERY refresh for as long as it stays wedged.
+private let unresponsiveAppRetryAfter: TimeInterval = 10
+
+/// Apps that missed `appRefreshDeadline`, and when. Cleared as soon as one
+/// answers again.
+@MainActor private var unresponsiveApps: [pid_t: Date] = [:]
+
+/// The windows mur has already registered for an app — what a refresh
+/// reports for an app it decided not to wait for.
+@MainActor private func knownWindowIds(ofPid pid: pid_t) -> [UInt32] {
+    MacWindow.allWindows.filter { $0.macApp.nsApp.processIdentifier == pid }.map { $0.windowId }
+}
+
+/// mur — refresh ONE app's window list, bounded by a deadline.
+///
+/// An app can stop answering the Accessibility API while still running and
+/// still listed in `runningApplications`. An unbounded `await` on such an
+/// app never returns, and `refreshAllAndGetAliveWindowIds` waits for every
+/// app, so one wedged app stops every refresh session in the process —
+/// measured on a live session with a hung Preview, where not one
+/// background refresh completed and the layout only ever updated when a
+/// CLI command happened to run a light session instead.
+///
+/// The deadline covers registration as well as the query: a wedged app
+/// hangs on the way IN, inside `getOrRegister`, as often as on the query.
+@MainActor
+private func refreshOneApp(
+    _ nsApp: NSRunningApplication,
+    frontmostAppBundleId: String?,
+) async throws -> (pid_t, [UInt32]) {
+    let pid = nsApp.processIdentifier
+    // An app that just missed the deadline will very likely miss it again.
+    // Paying `appRefreshDeadline` on every refresh would make every refresh
+    // that slow, so skip it outright and re-probe later.
+    if let since = unresponsiveApps[pid], -since.timeIntervalSinceNow < unresponsiveAppRetryAfter {
+        return (pid, knownWindowIds(ofPid: pid))
+    }
+    do {
+        let windowIds = try await withAxDeadline(nanoseconds: appRefreshDeadline) { () async throws -> [UInt32] in
+            guard let app = try await MacApp.getOrRegister(nsApp) else { return [] }
+            return try await app.refreshAndGetAliveWindowIds(frontmostAppBundleId: frontmostAppBundleId)
+        }
+        unresponsiveApps[pid] = nil
+        return (pid, windowIds)
+    } catch is AxDeadlineError {
+        unresponsiveApps[pid] = .now
+        // Report the windows mur already knows about, NOT an empty list: the
+        // caller garbage-collects every window missing from the result, and a
+        // silent app must not look like an app that closed all its windows.
+        return (pid, knownWindowIds(ofPid: pid))
+    }
 }

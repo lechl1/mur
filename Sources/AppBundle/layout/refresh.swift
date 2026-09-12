@@ -4,13 +4,69 @@ import Common
 @MainActor
 private var activeRefreshTask: Task<(), any Error>? = nil
 
+/// mur — the event that arrived while a refresh was already running, kept
+/// so exactly one follow-up runs when that refresh finishes. See
+/// `scheduleCancellableCompleteRefreshSession`.
+@MainActor
+private var pendingRefresh: (event: RefreshSessionEvent, preLayout: Bool)? = nil
+
+/// mur — identifies the refresh currently registered in
+/// `activeRefreshTask`, so a task that finishes late can tell whether that
+/// slot is still its own. `runLightSession` clears the slot from the
+/// outside while the task it cancelled is still unwinding; without the id
+/// that task's cleanup would clear a NEWER refresh's registration and let
+/// two run at once.
+@MainActor
+private var activeRefreshId: UInt64 = 0
+
+/// mur — COALESCE, DON'T PREEMPT.
+///
+/// This used to be `activeRefreshTask?.cancel()` followed by a fresh
+/// `Task`: every incoming event threw away the refresh in flight. That
+/// starves under mur's own feedback loop — a refresh calls `setAxFrame`,
+/// macOS answers with `AXMoved` / `AXResized`, those schedule a refresh,
+/// which cancels the one still laying windows out, which on its way out
+/// emits more frames. Measured on a live session, **every** background
+/// refresh ended in `CancellationError`, some after 1ms, so
+/// `pruneStackingLayout` never ran: a closed window kept its column and
+/// the survivors never grew into the freed space, until any CLI command
+/// (which runs a NON-cancellable session) happened to poke the daemon.
+/// That is the "closing a window doesn't resize the others" bug, and the
+/// same starvation is why a mouse-displaced window used to hang around
+/// off-grid.
+///
+/// So a refresh now runs to completion and anything that arrives meanwhile
+/// is remembered as ONE follow-up, which starts when it finishes. The
+/// follow-up keeps the newest event, since refreshes are idempotent — the
+/// state is recomputed from scratch, not accumulated. The loop terminates
+/// because a refresh that changes nothing emits no notifications.
+///
+/// `runLightSession` still cancels: an explicit command outranks a
+/// background refresh, and it re-schedules one on its own way out.
 @MainActor
 func scheduleCancellableCompleteRefreshSession(
     _ event: RefreshSessionEvent,
     optimisticallyPreLayoutWorkspaces: Bool = false,
 ) {
-    activeRefreshTask?.cancel()
+    if activeRefreshTask != nil {
+        pendingRefresh = (event, optimisticallyPreLayoutWorkspaces)
+        return
+    }
+    activeRefreshId &+= 1
+    let id = activeRefreshId
     activeRefreshTask = Task { @MainActor in
+        defer {
+            if activeRefreshId == id {
+                activeRefreshTask = nil
+                if let next = pendingRefresh {
+                    pendingRefresh = nil
+                    scheduleCancellableCompleteRefreshSession(
+                        next.event,
+                        optimisticallyPreLayoutWorkspaces: next.preLayout,
+                    )
+                }
+            }
+        }
         try checkCancellation()
         await runHeavyCompleteRefreshSession(
             event,
@@ -74,6 +130,10 @@ func runLightSession<T>(
     defer { signposter.endInterval(#function, state) }
     activeRefreshTask?.cancel() // Give priority to runSession
     activeRefreshTask = nil
+    // mur — the cancelled refresh must not run its own follow-up, and must
+    // not clear whatever registers itself next.
+    activeRefreshId &+= 1
+    pendingRefresh = nil
     return try await $refreshSessionEvent.withValue(event) {
         try await $_isStartup.withValue(event.isStartup) {
             // mur — distinguish "AX timed out" from "really no focused

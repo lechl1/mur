@@ -92,6 +92,48 @@ It is gated by the `experimental-stacking-layout` config flag, which now
 `layoutTiles`/`layoutAccordion`) remains only as the dormant fallback when the
 flag is off; it is not mur's model.
 
+## The refresh loop must always finish
+
+Everything mur does in the background — noticing a window closed, pulling
+a mouse-dragged window back into its cell, pruning a dead cell so the
+survivors grow — happens inside a *refresh session*. Two rules keep that
+loop alive, and both were learned from bugs that looked like layout bugs:
+
+- **Bound every AX wait.** An app can stop answering the Accessibility API
+  while still running and still listed in `runningApplications`. An
+  unbounded `await` on such an app never returns, and
+  `refreshAllAndGetAliveWindowIds` waits for *every* app, so one wedged
+  app stopped every refresh in the process. `refreshOneApp` wraps
+  registration AND the query in `withAxDeadline` (2s), then skips that app
+  for `unresponsiveAppRetryAfter` (10s) so the cost is paid once, not on
+  every refresh. A timed-out app reports **the windows mur already knows**,
+  never `[]` — the caller garbage-collects anything missing from the
+  result, so an empty list would read as "this app closed all its windows".
+- **Coalesce, don't preempt.** `scheduleCancellableCompleteRefreshSession`
+  used to cancel the refresh in flight on every incoming event. mur's own
+  layout feeds that queue — `setAxFrame` → `AXMoved`/`AXResized` →
+  another refresh — so refreshes cancelled each other indefinitely.
+  Measured live: **every** background refresh ended in
+  `CancellationError`, some after 1ms. Now a refresh runs to completion
+  and whatever arrives meanwhile is kept as ONE follow-up. That is sound
+  because refreshes are idempotent (state is recomputed, not accumulated)
+  and it terminates because a refresh that changes nothing emits no
+  notifications. `runLightSession` still cancels — an explicit command
+  outranks a background refresh.
+
+Symptom to recognise: mur ignores a window closing or a dragged window,
+and then **any CLI command fixes it instantly** — because a command runs a
+non-cancellable light session. That is never a layout bug; the layout code
+is fine and never ran. `mur stacking-info` is itself such a poke, so it
+destroys the evidence: measure window frames with System Events (or watch
+the screen) instead of asking mur.
+
+Window destruction is also subscribed on the **application** element, not
+only per window (`MacApp`'s app-level handlers). `kAXUIElementDestroyed`
+delivered to a dying window's own element is unreliable — for some apps it
+never arrives, and the close then went unnoticed until an unrelated event
+woke mur up.
+
 ## Restore is workspace-aware
 
 macOS has no workspaces to read back, so at startup **every** window is
