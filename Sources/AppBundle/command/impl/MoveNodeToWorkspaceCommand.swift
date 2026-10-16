@@ -37,14 +37,13 @@ func moveWindowToWorkspace(_ window: Window, _ targetWorkspace: Workspace, _ io:
                 .succ(io.err("Window '\(window.windowId)' already belongs to workspace '\(targetWorkspace.name)'. Tip: use --fail-if-noop to exit with non-zero code"))
         }
     }
-    let wasInGrid = window.nodeWorkspace?.stackingLayout.placements[window.windowId] != nil
-    if wasInGrid { _ = window.nodeWorkspace?.stackingLayout.remove(window.windowId) }
+    _ = window.nodeWorkspace?.stackingLayout.remove(window.windowId)
     let targetContainer: NonLeafTreeNodeObject = window.isFloating ? targetWorkspace : targetWorkspace.rootTilingContainer
     window.bind(to: targetContainer, adaptiveWeight: WEIGHT_AUTO, index: index)
     // mur — the grid, not the tree, decides where a window renders. Without a
     // cell on the destination it gets no rect: it stays wherever it was (or
     // hidden) and never joins the columns. Callers that place the window
     // themselves (`stacking-move`) pass `mountInGrid: false`.
-    if mountInGrid && wasInGrid { mountMovedWindowInGrid(window, in: targetWorkspace) }
+    if mountInGrid { mountMovedWindowInGrid(window, in: targetWorkspace) }
     return .from(bool: focusFollowsWindow ? window.focusWindow() : true)
 }

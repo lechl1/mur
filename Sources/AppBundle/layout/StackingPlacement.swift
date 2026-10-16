@@ -155,12 +155,41 @@ private func flushPendingGridMount(_ window: Window, in workspace: Workspace) ->
     return true
 }
 
-/// Give a window that was just moved to `workspace` a cell in its grid.
-/// No-op while the grid is off or the window floats (it has no cell to give).
+/// Make a window that was just moved to `workspace` visible there. A tiled
+/// window gets a cell in the grid; if the placement declines it (an app known
+/// to be non-resizable, a dialog-like app) it is floated and centred instead,
+/// since a tiled window with no cell is never given a rect and stays where it
+/// was. A floating window keeps its old screen coordinates, which on another
+/// monitor are somewhere else entirely, so it is pulled onto this monitor.
+/// No-op while the grid is off.
 @MainActor
 func mountMovedWindowInGrid(_ window: Window, in workspace: Workspace) {
-    guard config.experimentalStackingLayout, !window.isFloating else { return }
+    guard config.experimentalStackingLayout else { return }
+    if window.isFloating {
+        recenterIfOffMonitor(window, in: workspace)
+        return
+    }
     mountInStackingLayout(window, in: workspace)
+    if workspace.stackingLayout.placements[window.windowId] == nil {
+        floatAndCenterWindow(window, in: workspace)
+    }
+}
+
+@MainActor
+private func recenterIfOffMonitor(_ window: Window, in workspace: Workspace) {
+    let windowId = window.windowId
+    Task { @MainActor in
+        guard let window = Window.get(byId: windowId), let workspace = window.nodeWorkspace,
+              let rect = try? await window.getAxRect() else { return }
+        let mon = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+        let c = rect.center
+        if c.x >= mon.topLeftX, c.x <= mon.topLeftX + mon.width,
+           c.y >= mon.topLeftY, c.y <= mon.topLeftY + mon.height { return }
+        window.setAxFrame(
+            CGPoint(x: mon.topLeftX + (mon.width - rect.width) / 2, y: mon.topLeftY + (mon.height - rect.height) / 2),
+            rect.size,
+        )
+    }
 }
 
 /// The placement decision itself — see `tryRegisterInStackingLayout`.
