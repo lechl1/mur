@@ -38,7 +38,14 @@ func moveWindowToWorkspace(_ window: Window, _ targetWorkspace: Workspace, _ io:
         }
     }
     _ = window.nodeWorkspace?.stackingLayout.remove(window.windowId)
-    let targetContainer: NonLeafTreeNodeObject = window.isFloating ? targetWorkspace : targetWorkspace.rootTilingContainer
+    // mur — "non-resizable" is a verdict from one measurement, and a resize
+    // refused while the window sat clamped in the hide corner reads exactly
+    // like a fixed-size app. Moving it is the user asking for a fresh start:
+    // forget the verdict and let it tile; a window that truly can't resize is
+    // floated again by the same check.
+    let retry = window.nodeWorkspace?.stackingLayout.nonResizableWindows.remove(window.windowId) != nil
+    if retry, let appId = window.app.rawAppBundleId { knownNonResizableAppIds.remove(appId) }
+    let targetContainer: NonLeafTreeNodeObject = window.isFloating && !retry ? targetWorkspace : targetWorkspace.rootTilingContainer
     window.bind(to: targetContainer, adaptiveWeight: WEIGHT_AUTO, index: index)
     // mur — the grid, not the tree, decides where a window renders. Without a
     // cell on the destination it gets no rect: it stays wherever it was (or
