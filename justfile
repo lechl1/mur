@@ -57,13 +57,16 @@ uninstall: stop
     bash install-app.sh --uninstall
     @echo "🗑  Removed {{prefix}}/bin/mur"
 
-# Launch the daemon detached so global hotkeys register (see CLAUDE.md):
-# the installed app if there is one, otherwise the debug bundle.
+# Launch the daemon fully detached so global hotkeys register (see CLAUDE.md):
+# nohup alone only ignores SIGHUP and leaves the process on the shell's tty
+# and session, which breaks hotkey registration. macOS has no `setsid`, so
+# perl starts a new session (no controlling tty) before exec'ing the app.
+# Runs the installed app if there is one, otherwise the debug bundle.
 start:
     #!/usr/bin/env bash
     set -uo pipefail
     if test -x "{{installed_binary}}"; then bin="{{installed_binary}}"; else bin="{{binary}}"; fi
-    (nohup "$bin" >"{{log}}" 2>&1 &) ; disown 2>/dev/null || true
+    (nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' -- "$bin" </dev/null >"{{log}}" 2>&1 &) ; disown 2>/dev/null || true
     echo "▶  Started $bin — logs at {{log}}"
 
 # Restart the daemon.
