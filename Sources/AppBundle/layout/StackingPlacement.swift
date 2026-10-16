@@ -279,7 +279,10 @@ func restoreWindowStateOnRegister(_ window: Window) {
     pendingRestoreIds.insert(window.windowId)
     coordinatedRestoreTask?.cancel()
     coordinatedRestoreTask = Task { @MainActor in
-        try? await Task.sleep(nanoseconds: 90_000_000) // debounce past the registration loop
+        // The 90ms debounce exists for the startup registration loop. Once
+        // the first restore has run, a lone new window only needs a beat.
+        let debounce: UInt64 = restoreModeDeadline == nil ? 90_000_000 : 15_000_000
+        try? await Task.sleep(nanoseconds: debounce)
         if Task.isCancelled { return }
         await runCoordinatedRestore()
     }
@@ -513,6 +516,10 @@ private func runCoordinatedRestore() async {
         relaunchMissingTerminalSessions()
     }
 
+    // Apply the new grid now. The refresh below is coalesced behind any
+    // refresh already in flight (up to an AX deadline), and the window would
+    // sit where the app opened it until that finished.
+    if !isStartupRestore { try? await layoutWorkspaces() }
     scheduleCancellableCompleteRefreshSession(.ax("restore-window-state"))
 }
 

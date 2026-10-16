@@ -231,7 +231,8 @@ func normalizedSessionTitle(_ raw: String) -> String? {
 private func openTerminalTitles() async -> Set<String> {
     var titles = Set<String>()
     for window in MacWindow.allWindows
-    where sessionRestoreTerminalBundleIds.contains(window.app.rawAppBundleId ?? "") {
+        where sessionRestoreTerminalBundleIds.contains(window.app.rawAppBundleId ?? "")
+    {
         if let t = normalizedSessionTitle((try? await window.title) ?? "") { titles.insert(t) }
     }
     return titles
