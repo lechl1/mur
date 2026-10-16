@@ -33,8 +33,13 @@ struct TerminalSession: Codable, Equatable {
     /// fallback then. Optional in the on-disk format, so files written
     /// before this field load fine.
     let claudeSessionId: String?
+    /// The window title when last captured, normalised by `normalizedSessionTitle`.
+    /// A Claude Code window has no cwd to match on (no shell integration), but
+    /// its title is the conversation's name and survives a reload. Optional so
+    /// files written before this field load fine.
+    let title: String?
 
-    init(cwd: String, kind: Kind, workspace: String, span: TileSpan, claudeSessionId: String? = nil) {
+    init(cwd: String, kind: Kind, workspace: String, span: TileSpan, claudeSessionId: String? = nil, title: String? = nil) {
         self.cwd = cwd
         self.kind = kind
         self.workspace = workspace
@@ -43,6 +48,7 @@ struct TerminalSession: Codable, Equatable {
         self.slot0 = span.slot0
         self.slot1 = span.slot1
         self.claudeSessionId = claudeSessionId
+        self.title = title
     }
 
     var span: TileSpan { TileSpan(lane0: lane0, lane1: lane1, slot0: slot0, slot1: slot1) }
@@ -125,6 +131,8 @@ func captureAllTerminalSessions() async {
                 workspace: workspace.name,
                 span: span,
                 claudeSessionId: sessionId,
+                title: normalizedSessionTitle((try? await window.title) ?? "")
+                    ?? terminalSessionStore.recall(cwd: cwd)?.title,
             ))
         }
     }
@@ -194,15 +202,39 @@ func relaunchMissingTerminalSessions() {
         // cwd), and the session would be relaunched on top of the one that's
         // already running. Re-read both right before deciding.
         openCwds.formUnion(await openTerminalCwds())
+        let openTitles = await openTerminalTitles()
         let running = await claudeCwds()
+        fputs("mur session-restore: open=\(openCwds.sorted()) titles=\(openTitles.sorted()) claude=\(running.sorted()) saved=\(terminalSessionStore.all.map(\.cwd).sorted())\n", stderr)
         for session in terminalSessionStore.all
             where !openCwds.contains(session.cwd)
+            && !(session.title.map(openTitles.contains) ?? false)
             && !(session.kind == .claude && running.contains(session.cwd))
             && FileManager.default.fileExists(atPath: session.cwd)
         {
+            fputs("mur session-restore: relaunching \(session.cwd) (\(session.kind))\n", stderr)
             spawnTerminalSession(session)
         }
     }
+}
+
+/// A window title reduced to what identifies the conversation: Claude Code
+/// prefixes its title with a status glyph (✳ ◐ ⠂ …) that changes while it
+/// works, so everything before the first letter or digit is dropped. `nil`
+/// for an empty title or a bare shell prompt path, which identify nothing.
+func normalizedSessionTitle(_ raw: String) -> String? {
+    let t = String(raw.drop { !($0.isLetter || $0.isNumber) }).trimmingCharacters(in: .whitespaces)
+    return t.isEmpty ? nil : t
+}
+
+/// Normalised titles of the terminal windows mur currently knows about.
+@MainActor
+private func openTerminalTitles() async -> Set<String> {
+    var titles = Set<String>()
+    for window in MacWindow.allWindows
+    where sessionRestoreTerminalBundleIds.contains(window.app.rawAppBundleId ?? "") {
+        if let t = normalizedSessionTitle((try? await window.title) ?? "") { titles.insert(t) }
+    }
+    return titles
 }
 
 /// Working directories of the terminal windows mur currently knows about.
