@@ -271,6 +271,21 @@ private func layoutWorkspaces() async throws {
     }
     for workspace in Workspace.all where !workspace.isVisible {
         let corner = monitorToOptimalHideCorner[workspace.workspaceMonitor.rect.topLeftCorner] ?? .bottomRightCorner
+        // mur — size the tiled windows to their cells BEFORE hiding them. A
+        // window sent here keeps its old size while hidden and is only
+        // resized once the workspace is visited, so the grid looked misaligned
+        // until then. Position stays in the corner; only the size is applied.
+        if config.experimentalStackingLayout {
+            let slotGap: CGFloat = 0 // gaps are corrected by the real layout on the first visit
+            let rect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+            for windowId in workspace.stackingLayout.zOrder {
+                guard let window = Window.get(byId: windowId), window.nodeWorkspace === workspace,
+                      let r = workspace.stackingLayout.resolveRect(for: windowId, in: rect, innerGap: slotGap),
+                      window.lastAppliedLayoutPhysicalRect?.size != r.size else { continue }
+                window.setAxFrame(nil, r.size)
+                window.lastAppliedLayoutPhysicalRect = r
+            }
+        }
         for window in workspace.allLeafWindowsRecursive {
             try await (window as! MacWindow).hideInCorner(corner) // todo as!
         }
