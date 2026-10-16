@@ -44,7 +44,7 @@ private func crossWorkspaceOrMonitorFallback(
     _ = sourceWorkspace.stackingLayout.remove(window.windowId)
     _ = moveWindowToWorkspace(
         window, dest, io,
-        focusFollowsWindow: true, failIfNoop: false,
+        focusFollowsWindow: true, failIfNoop: false, mountInGrid: false,
     )
     // Best-effort: insert the window into the destination grid at the cell
     // it "enters" — the edge opposite the move direction, aligned to where

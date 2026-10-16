@@ -155,6 +155,14 @@ private func flushPendingGridMount(_ window: Window, in workspace: Workspace) ->
     return true
 }
 
+/// Give a window that was just moved to `workspace` a cell in its grid.
+/// No-op while the grid is off or the window floats (it has no cell to give).
+@MainActor
+func mountMovedWindowInGrid(_ window: Window, in workspace: Workspace) {
+    guard config.experimentalStackingLayout, !window.isFloating else { return }
+    mountInStackingLayout(window, in: workspace)
+}
+
 /// The placement decision itself — see `tryRegisterInStackingLayout`.
 @MainActor
 private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
