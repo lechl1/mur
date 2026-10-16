@@ -44,7 +44,9 @@ func moveWindowToWorkspace(_ window: Window, _ targetWorkspace: Workspace, _ io:
     // forget the verdict and let it tile; a window that truly can't resize is
     // floated again by the same check.
     let retry = window.nodeWorkspace?.stackingLayout.nonResizableWindows.remove(window.windowId) != nil
-    if retry, let appId = window.app.rawAppBundleId { knownNonResizableAppIds.remove(appId) }
+    // The app-level verdict is the same one-shot guess; it would also make
+    // `mountInStackingLayout` skip the grid for every moved window of that app.
+    if retry || !window.isFloating, let appId = window.app.rawAppBundleId { knownNonResizableAppIds.remove(appId) }
     let targetContainer: NonLeafTreeNodeObject = window.isFloating && !retry ? targetWorkspace : targetWorkspace.rootTilingContainer
     window.bind(to: targetContainer, adaptiveWeight: WEIGHT_AUTO, index: index)
     // mur — the grid, not the tree, decides where a window renders. Without a
