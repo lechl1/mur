@@ -188,8 +188,17 @@ func relaunchMissingTerminalSessions() {
             sessionRestoreTerminalBundleIds.contains($0.app.rawAppBundleId ?? "")
         }
         if openCwds.isEmpty && terminalsOpen { return }
+        // mur — a live `claude` process in that directory is conclusive, and
+        // unlike the window set it doesn't depend on timing: the settle poll
+        // above can end while a slow window hasn't registered (or has no
+        // cwd), and the session would be relaunched on top of the one that's
+        // already running. Re-read both right before deciding.
+        openCwds.formUnion(await openTerminalCwds())
+        let running = await claudeCwds()
         for session in terminalSessionStore.all
-            where !openCwds.contains(session.cwd) && FileManager.default.fileExists(atPath: session.cwd)
+            where !openCwds.contains(session.cwd)
+            && !(session.kind == .claude && running.contains(session.cwd))
+            && FileManager.default.fileExists(atPath: session.cwd)
         {
             spawnTerminalSession(session)
         }
