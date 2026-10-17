@@ -312,6 +312,17 @@ final class MacApp: AbstractApp {
         }
     }
 
+    /// mur — alive window ids of ONE app, bounded like a full refresh. Lets a
+    /// window-destroyed notification prune and re-layout without waiting on
+    /// every other app's AX query.
+    @MainActor
+    static func refreshAliveWindowIds(ofPid pid: pid_t) async throws -> (MacApp, [UInt32])? {
+        guard let nsApp = NSRunningApplication(processIdentifier: pid), nsApp.activationPolicy == .regular else { return nil }
+        let (_, ids) = try await refreshOneApp(nsApp, frontmostAppBundleId: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+        guard let app = MacApp.allAppsMap[pid] else { return nil }
+        return (app, ids)
+    }
+
     fileprivate func refreshAndGetAliveWindowIds(frontmostAppBundleId: String?) async throws -> [UInt32] {
         if nsApp.isTerminated {
             await destroy()

@@ -216,11 +216,35 @@ private func refresh() async throws {
     Workspace.garbageCollectUnusedWorkspaces()
 }
 
-func refreshObs(_: AXObserver, _: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
+func refreshObs(_: AXObserver, element: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
     let notif = notif as String
+    var pid: pid_t = 0
+    let isDestroy = notif == kAXUIElementDestroyedNotification as String
+    if isDestroy { AXUIElementGetPid(element, &pid) }
     Task { @MainActor in
         if !TrayMenuModel.shared.isEnabled { return }
+        if isDestroy, pid != 0 { await pruneClosedWindowsOfApp(pid: pid) }
         scheduleCancellableCompleteRefreshSession(.ax(notif))
+    }
+}
+
+/// mur — fast path for a closed window: query only the app that reported it,
+/// garbage-collect its dead windows and re-layout, instead of waiting for the
+/// full refresh to hear back from every app. The full refresh still follows.
+/// Skipped while a refresh is in flight so the two never interleave.
+@MainActor
+private func pruneClosedWindowsOfApp(pid: pid_t) async {
+    guard activeRefreshTask == nil else { return }
+    guard let (app, ids) = try? await MacApp.refreshAliveWindowIds(ofPid: pid), activeRefreshTask == nil else { return }
+    let alive = ids.toSet()
+    var changed = false
+    for window in MacWindow.allWindows where window.macApp == app && !alive.contains(window.windowId) {
+        window.garbageCollect(skipClosedWindowsCache: false)
+        changed = true
+    }
+    if changed {
+        refreshModel()
+        try? await layoutWorkspaces()
     }
 }
 
