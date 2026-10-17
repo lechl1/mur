@@ -220,20 +220,22 @@ func refreshObs(_: AXObserver, element: AXUIElement, notif: CFString, _: UnsafeM
     let notif = notif as String
     var pid: pid_t = 0
     let isDestroy = notif == kAXUIElementDestroyedNotification as String
-    if isDestroy { AXUIElementGetPid(element, &pid) }
+    let isCreate = notif == kAXWindowCreatedNotification as String
+    if isDestroy || isCreate { AXUIElementGetPid(element, &pid) }
     Task { @MainActor in
         if !TrayMenuModel.shared.isEnabled { return }
-        if isDestroy, pid != 0 { await pruneClosedWindowsOfApp(pid: pid) }
+        if isDestroy || isCreate, pid != 0 { await syncWindowsOfApp(pid: pid) }
         scheduleCancellableCompleteRefreshSession(.ax(notif))
     }
 }
 
-/// mur — fast path for a closed window: query only the app that reported it,
-/// garbage-collect its dead windows and re-layout, instead of waiting for the
-/// full refresh to hear back from every app. The full refresh still follows.
-/// Skipped while a refresh is in flight so the two never interleave.
+/// mur — fast path for a window opening or closing: query only the app that
+/// reported it, register its new windows, garbage-collect its dead ones and
+/// re-layout, instead of waiting for the full refresh to hear back from every
+/// app. The full refresh still follows. Skipped while a refresh is in flight
+/// so the two never interleave.
 @MainActor
-private func pruneClosedWindowsOfApp(pid: pid_t) async {
+private func syncWindowsOfApp(pid: pid_t) async {
     guard activeRefreshTask == nil else { return }
     guard let (app, ids) = try? await MacApp.refreshAliveWindowIds(ofPid: pid), activeRefreshTask == nil else { return }
     let alive = ids.toSet()
@@ -241,6 +243,9 @@ private func pruneClosedWindowsOfApp(pid: pid_t) async {
     for window in MacWindow.allWindows where window.macApp == app && !alive.contains(window.windowId) {
         window.garbageCollect(skipClosedWindowsCache: false)
         changed = true
+    }
+    for windowId in ids where Window.get(byId: windowId) == nil {
+        if (try? await MacWindow.getOrRegister(windowId: windowId, macApp: app)) != nil { changed = true }
     }
     if changed {
         refreshModel()
