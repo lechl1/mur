@@ -638,7 +638,10 @@ final class StackingLayout {
 
     func laneWeight(lane: Int) -> CGFloat {
         guard lane >= 0, lane < shape.lanes else { return Self.defaultColumnWidth }
-        return _laneWeights?[lane] ?? Self.defaultColumnWidth
+        // The stored array can be shorter than `shape.lanes` (shape changed
+        // after the weights were set); a missing entry is a default column.
+        guard let weights = _laneWeights, lane < weights.count else { return Self.defaultColumnWidth }
+        return weights[lane]
     }
 
     func setLaneWeights(_ weights: [CGFloat]) {
