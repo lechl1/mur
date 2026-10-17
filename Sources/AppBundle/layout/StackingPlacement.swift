@@ -541,6 +541,15 @@ private func runCoordinatedRestore() async {
 @MainActor private var restoreModeDeadline: Date?
 @MainActor private var unclaimedRestoreEntries = 0
 
+/// True until the startup restore has run and every remembered window has
+/// been claimed (or `restoreSettle` ran out). Persisting in that window would
+/// overwrite the remembered workspaces with wherever startup parked windows.
+@MainActor
+var isRestoringWindowState: Bool {
+    guard let deadline = restoreModeDeadline else { return true }
+    return unclaimedRestoreEntries > 0 && Date.now < deadline
+}
+
 // MARK: - Persisting window state
 
 /// mur — persist EVERYTHING mur needs to rebuild this screen after a

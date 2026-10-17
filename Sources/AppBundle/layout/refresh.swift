@@ -257,8 +257,34 @@ enum OptimalHideCorner {
     case bottomLeftCorner, bottomRightCorner
 }
 
+/// mur — last (workspace, column, row) of every window that was persisted
+/// or considered for persisting. Moves reach the grid by many roads — stacking
+/// commands, move-node-to-workspace/monitor, mouse drags, a column closing
+/// and compacting — so `layoutWorkspaces` (which they all end in) compares
+/// against this instead of every road remembering to call
+/// `persistWindowStateSoon`. A restart then restores where windows REALLY were.
+@MainActor private var lastPersistedPlacements: [WindowId: String] = [:]
+
+@MainActor
+private func persistIfPlacementsChanged() {
+    if isRestoringWindowState { return }
+    var current: [WindowId: String] = [:]
+    for workspace in Workspace.all {
+        for (windowId, span) in workspace.stackingLayout.placements {
+            current[windowId] = "\(workspace.name):\(span.lane0):\(span.slot0)"
+        }
+        for window in workspace.children.filterIsInstance(of: Window.self) {
+            current[window.windowId] = "\(workspace.name):floating"
+        }
+    }
+    if current == lastPersistedPlacements { return }
+    lastPersistedPlacements = current
+    persistWindowStateSoon()
+}
+
 @MainActor
 func layoutWorkspaces() async throws {
+    defer { persistIfPlacementsChanged() }
     if !TrayMenuModel.shared.isEnabled {
         for workspace in Workspace.all {
             workspace.allLeafWindowsRecursive.forEach { ($0 as! MacWindow).unhideFromCorner() } // todo as!
