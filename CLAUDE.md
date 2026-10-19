@@ -279,29 +279,19 @@ disown 2>/dev/null
 The subshell + `disown` detach the process from the shell so hotkey
 registration survives the launching session exiting.
 
-## Running mur as a service (crash protection)
+## No restart wrapper — mur handles its own failures
 
-`just install` installs and starts the service itself, and `just
-stop`/`start`/`restart` go through launchd once the plist exists — a bare
-`pkill` reads to launchd as a crash (the SIGTERM handler exits non-zero),
-so it would relaunch mur behind the recipe's back and `start` would add a
-second copy. Hangs are covered too: `startMainThreadWatchdog`
-(`util/MainThreadWatchdog.swift`) aborts mur when the main thread has been
-silent for 30s, which leaves a crash report with the stuck stack and lets
-launchd restart it. A process that never exits is never restarted.
-
-`bash install-service.sh` installs a per-user launchd agent
-(`~/Library/LaunchAgents/com.mur.MurApp.plist`) that runs the MurApp binary
-directly — never via `open`, which would break hotkey registration — with
-`KeepAlive.SuccessfulExit = false`, so launchd relaunches it after a crash
-but leaves it down after a clean quit. `--status` / `--uninstall` do what
-they say; logs go to `~/Library/Logs/mur.log`.
-
-Caveat: a launchd-launched MurApp is its own TCC client. Launching it from a
-terminal inherits that terminal's Accessibility grant, launchd does not — so
-the first service start raises the "control this computer" prompt and mur
-sees zero windows until it's approved. An ad-hoc `codesign -s -` build gets a
-new identity on every rebuild, which can require re-approving it.
+mur is **not** run under a crash-restarting supervisor (launchd
+`KeepAlive`) and has no self-aborting main-thread watchdog. Both existed
+briefly and the watchdog itself was the crash: its check closure was
+written inside a `@MainActor` function, so Swift 6 treated it as
+main-actor isolated and trapped in `dispatch_assert_queue` when it ran on
+a global queue — 30s after every launch, which launchd turned into a
+crash loop (and every relaunch of an ad-hoc-signed build re-raised the
+Accessibility prompt). A restart loop also hides bugs instead of fixing
+them. Failures are caught and handled inside mur: bound the wait
+(`withAxDeadline`), log and carry on (`fireAndForget`), degrade instead of
+trapping (e.g. `laneWeight` tolerating a short weights array).
 
 ## Building
 

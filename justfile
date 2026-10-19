@@ -39,29 +39,20 @@ default:
 build *args:
     export PATH="$(echo "$PATH" | tr ':' '\n' | grep -v '/.swiftly/' | paste -sd: -)"; unset TOOLCHAINS; bash build-debug.sh {{args}}
 
-# launchd service that runs the daemon and restarts it on failure
-# (install-service.sh). `stop`/`start` go through it once it's installed:
-# a plain pkill reads to launchd as a crash (SIGTERM exits non-zero), so it
-# would relaunch the daemon behind our back and `start` would add a second.
-service_label := "com.mur.MurApp"
-service_plist := env_var("HOME") / "Library/LaunchAgents" / service_label + ".plist"
-
 # Build, install the app into /Applications, put the `mur` CLI on PATH,
-# and (re)start the daemon as a launchd service that restarts it whenever
-# it crashes or hangs. Stop first: you can't overwrite the executable of a
-# running bundle.
+# and (re)start the daemon. Stop first: you can't overwrite the
+# executable of a running bundle.
 install: build stop
     bash install-app.sh
     install -d "{{prefix}}/bin"
     ln -sf "{{installed_cli}}" "{{prefix}}/bin/mur"
-    MUR_APP="{{installed_app}}" bash install-service.sh
-    @echo "✅ Installed {{installed_app}} + {{prefix}}/bin/mur (logs: ~/Library/Logs/mur.log)"
+    @just start
+    @echo "✅ Installed {{installed_app}} + {{prefix}}/bin/mur (logs: {{log}})"
     @echo "   Launchable from Finder/Spotlight. First launch from there needs its own"
     @echo "   Accessibility grant: System Settings → Privacy & Security → Accessibility → Mur."
 
-# Remove the installed app, the CLI symlink and the service, and stop the daemon.
+# Remove the installed app and the CLI symlink, and stop the daemon.
 uninstall: stop
-    bash install-service.sh --uninstall
     -rm -f "{{prefix}}/bin/mur"
     bash install-app.sh --uninstall
     @echo "🗑  Removed {{prefix}}/bin/mur"
@@ -74,11 +65,6 @@ uninstall: stop
 start:
     #!/usr/bin/env bash
     set -uo pipefail
-    if test -f "{{service_plist}}"; then
-        launchctl bootstrap "gui/$(id -u)" "{{service_plist}}" 2>/dev/null || launchctl kickstart "gui/$(id -u)/{{service_label}}"
-        echo "▶  Started {{service_label}} (launchd) — logs at ~/Library/Logs/mur.log"
-        exit 0
-    fi
     if test -x "{{installed_binary}}"; then bin="{{installed_binary}}"; else bin="{{binary}}"; fi
     (nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' -- "$bin" </dev/null >"{{log}}" 2>&1 &) ; disown 2>/dev/null || true
     echo "▶  Started $bin — logs at {{log}}"
@@ -88,7 +74,6 @@ restart: stop start
 
 # Stop the running daemon (installed or debug — the pattern matches both).
 stop:
-    -launchctl bootout "gui/$(id -u)/{{service_label}}" 2>/dev/null
     -pkill -f "Mur(App)?\.app/Contents/MacOS/MurApp"
     @sleep 1
 
