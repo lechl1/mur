@@ -7,6 +7,7 @@ import Foundation
         initTerminationHandler()
         unsafe _isCli = false
         initServerArgs()
+        startMainThreadWatchdog()
         if isDebug {
             await toggleReleaseServerIfDebug(.off)
             interceptTermination(SIGINT)

@@ -281,6 +281,15 @@ registration survives the launching session exiting.
 
 ## Running mur as a service (crash protection)
 
+`just install` installs and starts the service itself, and `just
+stop`/`start`/`restart` go through launchd once the plist exists — a bare
+`pkill` reads to launchd as a crash (the SIGTERM handler exits non-zero),
+so it would relaunch mur behind the recipe's back and `start` would add a
+second copy. Hangs are covered too: `startMainThreadWatchdog`
+(`util/MainThreadWatchdog.swift`) aborts mur when the main thread has been
+silent for 30s, which leaves a crash report with the stuck stack and lets
+launchd restart it. A process that never exits is never restarted.
+
 `bash install-service.sh` installs a per-user launchd agent
 (`~/Library/LaunchAgents/com.mur.MurApp.plist`) that runs the MurApp binary
 directly — never via `open`, which would break hotkey registration — with

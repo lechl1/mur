@@ -22,6 +22,7 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR="$HOME/Library/Logs"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GUI="gui/$(id -u)"
+PROC_PATTERN='Mur(App)?\.app/Contents/MacOS/MurApp'
 
 usage() { sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
@@ -50,8 +51,9 @@ status() {
     else
         echo "service: not loaded ($LABEL)"
     fi
-    pgrep -f "MurApp.app/Contents/MacOS/MurApp" >/dev/null 2>&1 \
-        && echo "process: running (pid $(pgrep -f 'MurApp.app/Contents/MacOS/MurApp' | tr '\n' ' '))" \
+    # Matches the installed Mur.app as well as the MurApp.app debug bundle.
+    pgrep -f "$PROC_PATTERN" >/dev/null 2>&1 \
+        && echo "process: running (pid $(pgrep -f "$PROC_PATTERN" | tr '\n' ' '))" \
         || echo "process: not running"
 }
 
@@ -99,7 +101,7 @@ EOF
 # Replace any previous instance, then hand the running app over to launchd
 # so the service — not a stray shell-launched copy — owns the process.
 launchctl bootout "$GUI/$LABEL" 2>/dev/null || true
-pkill -f "MurApp.app/Contents/MacOS/MurApp" 2>/dev/null || true
+pkill -f "$PROC_PATTERN" 2>/dev/null || true
 sleep 1
 launchctl bootstrap "$GUI" "$PLIST"
 launchctl enable "$GUI/$LABEL"
