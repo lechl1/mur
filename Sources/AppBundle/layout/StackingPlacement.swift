@@ -231,6 +231,7 @@ private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
     if !appId.isEmpty && recognizedTerminalBundleIds.contains(appId) {
         let layout = workspace.stackingLayout
         let used = layout.usedLanes
+        let existingWidths = used.map { layout.laneWeight(lane: $0) }
         let lane: Int
         if used.isEmpty {
             lane = 0
@@ -241,8 +242,15 @@ private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
         layout.place(window.windowId, at: .soleSlot(lane: lane))
         if let placed = layout.placements[window.windowId] {
             // Absolute width so a lone terminal renders centered at 1/3
-            // (fit-or-center), matching naru's carousel-disabled feel.
-            layout.setLaneAbsoluteWidth(terminalLaneFraction(for: workspace.workspaceMonitor), lane: placed.lane0)
+            // (fit-or-center), matching naru's carousel-disabled feel — or
+            // an equal share when the columns already there fill the screen.
+            layout.setLaneAbsoluteWidth(
+                StackingLayout.widthForNewColumn(
+                    natural: terminalLaneFraction(for: workspace.workspaceMonitor),
+                    existing: existingWidths,
+                ),
+                lane: placed.lane0,
+            )
         }
         return
     }
@@ -255,8 +263,19 @@ private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
     _ = shape
     let focusedLane = focus.windowOrNil
         .flatMap { workspace.stackingLayout.placements[$0.windowId]?.lane0 }
-    let span = workspace.stackingLayout.placementForNewWindow(focusedLane: focusedLane)
-    workspace.stackingLayout.place(window.windowId, at: span)
+    let layout = workspace.stackingLayout
+    let usedBefore = layout.usedLanes
+    let existingWidths = usedBefore.map { layout.laneWeight(lane: $0) }
+    let span = layout.placementForNewWindow(focusedLane: focusedLane)
+    layout.place(window.windowId, at: span)
+    // A new column (not a new row) beside columns that fill the screen
+    // takes an equal share instead of squeezing in at its stale width.
+    if layout.usedLanes.count > usedBefore.count, let placed = layout.placements[window.windowId] {
+        layout.setLaneAbsoluteWidth(
+            StackingLayout.widthForNewColumn(natural: layout.laneWeight(lane: placed.lane0), existing: existingWidths),
+            lane: placed.lane0,
+        )
+    }
 }
 
 /// Windows awaiting a coordinated restore, and the debounced task that runs
@@ -337,7 +356,8 @@ private func runCoordinatedRestore() async {
         // now, and seed its last-applied rect with that opening position so
         // the spring animation carries it into its cell instead of the
         // animator treating this as a first placement and snapping.
-        if flushPendingGridMount(window, in: curWs) {
+        let openedLater = flushPendingGridMount(window, in: curWs)
+        if openedLater {
             if let opening = try? await window.getAxRect() {
                 window.lastAppliedLayoutPhysicalRect = opening
             }
@@ -356,6 +376,9 @@ private func runCoordinatedRestore() async {
         // become two ROWS of that column (`place` inserts, never overlaps),
         // which is what sharing a repo should look like anyway.
         var recalled = windowMemory.recall(appId: appId, title: title, shape: shape)
+        // Whether `recalled` names THIS window (title / terminal session)
+        // or just a cell its app used to have (the pool below).
+        var isAppPoolGuess = false
         if recalled == nil || recalled?.floating == false,
            sessionRestoreTerminalBundleIds.contains(appId),
            // `resolveTerminalCwd`, not `window.cwd`: a session mur itself
@@ -378,6 +401,7 @@ private func runCoordinatedRestore() async {
             if let next = pool.first {
                 appSpanPool[appId] = Array(pool.dropFirst())
                 recalled = next
+                isAppPoolGuess = true
             } else {
                 appSpanPool[appId] = []
             }
@@ -396,7 +420,7 @@ private func runCoordinatedRestore() async {
             //
             // Startup only. A window opened later really is new, and the
             // user opened it on the workspace they're looking at.
-            if isStartupRestore,
+            if isStartupRestore, !openedLater,
                let home = windowMemory.dominantWorkspace(appId: appId, shape: shape),
                home != curWs.name
             {
@@ -420,7 +444,16 @@ private func runCoordinatedRestore() async {
         // Claimed one of the remembered windows — restore mode ends as soon
         // as there are none left to steer, without waiting out `restoreSettle`.
         unclaimedRestoreEntries -= 1
-        let targetWs = (!state.workspace.isEmpty && state.workspace != curWs.name)
+        // mur — A NEW WINDOW JOINS THE WORKSPACE IT OPENED ON. Only restore
+        // steers a window to its remembered workspace (macOS can't tell mur
+        // where it was). After that, a window the user opens is new: moving
+        // it to wherever its app or title was last seen made it vanish from
+        // the workspace on screen the moment it appeared. Even in restore
+        // mode, a window that opened after the startup batch is only steered
+        // on a match that names it (title / terminal session) — those are
+        // what mur is waiting for — never on a guess from its app's pool.
+        let steer = isStartupRestore && !(openedLater && isAppPoolGuess)
+        let targetWs = (steer && !state.workspace.isEmpty && state.workspace != curWs.name)
             ? Workspace.get(byName: state.workspace) : curWs
         if state.floating {
             floaters.append((window, targetWs))
@@ -433,6 +466,18 @@ private func runCoordinatedRestore() async {
     for (_, group) in Dictionary(grouping: tiled, by: { $0.workspace.name }) {
         guard let workspace = group.first?.workspace else { continue }
         let layout = workspace.stackingLayout
+        // mur — snapshot the width of every column that was already here
+        // (keyed by a window in it), BEFORE the detach below: detaching a
+        // just-mounted window closes its column, which hands its width to
+        // these survivors. Outside startup they get exactly these widths
+        // back — a window joining must not reset its neighbours.
+        let groupIds = Set(group.map { $0.window.windowId })
+        var existingWidthById: [WindowId: CGFloat] = [:]
+        var existingLaneWidths: [Int: CGFloat] = [:]
+        for (id, span) in layout.placements where !groupIds.contains(id) {
+            existingWidthById[id] = layout.laneWeight(lane: span.lane0)
+            existingLaneWidths[span.lane0] = layout.laneWeight(lane: span.lane0)
+        }
         // Detach every window from wherever it is (incl. other workspaces).
         for t in group {
             t.window.nodeWorkspace?.stackingLayout.remove(t.window.windowId)
@@ -478,13 +523,26 @@ private func runCoordinatedRestore() async {
         // Widths aren't persisted, so a restore is exactly the moment to
         // start from the defaults again: a terminal column at its fixed
         // fraction, everything else at the default column width.
+        //
+        // That reset is for the startup batch only. Later, the group is the
+        // window(s) that just opened: columns that were already on screen
+        // keep their widths, and only a brand-new column gets a default —
+        // an equal share if the others already fill the screen, so a
+        // full-width terminal plus a new one ends up 50/50, not 1/3 each.
         for lane in layout.usedLanes {
-            let hasTerminal = layout.placements.contains { id, span in
-                span.lane0 <= lane && lane <= span.lane1
-                    && recognizedTerminalBundleIds.contains(Window.get(byId: id)?.app.rawAppBundleId ?? "")
+            let ids = layout.windows(in: lane)
+            if !isStartupRestore, let kept = ids.lazy.compactMap({ existingWidthById[$0] }).first {
+                layout.setLaneAbsoluteWidth(kept, lane: lane)
+                continue
             }
+            let hasTerminal = ids.contains {
+                recognizedTerminalBundleIds.contains(Window.get(byId: $0)?.app.rawAppBundleId ?? "")
+            }
+            let natural = hasTerminal ? terminalLaneFraction(for: workspace.workspaceMonitor) : StackingLayout.defaultColumnWidth
             layout.setLaneAbsoluteWidth(
-                hasTerminal ? terminalLaneFraction(for: workspace.workspaceMonitor) : StackingLayout.defaultColumnWidth,
+                isStartupRestore
+                    ? natural
+                    : StackingLayout.widthForNewColumn(natural: natural, existing: Array(existingLaneWidths.values)),
                 lane: lane,
             )
         }

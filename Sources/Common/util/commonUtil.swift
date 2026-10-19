@@ -12,6 +12,9 @@ public var refreshSessionEvent: RefreshSessionEvent? = nil
 @TaskLocal
 private var recursionDetectorDuringTermination = false
 
+/// How long `dieT` waits for `beforeTermination` before crashing anyway.
+private let dieCleanupTimeout: DispatchTimeInterval = .seconds(3)
+
 public func dieT<T>(
     _ __message: String = "",
     file: StaticString = #fileID,
@@ -62,7 +65,15 @@ public func dieT<T>(
                 try await terminationHandler.beforeTermination()
             }
         }
-        semaphore.wait()
+        // mur — bounded. `die` is almost always called on the main thread,
+        // and the server's `beforeTermination` is main-actor work
+        // (`makeAllWindowsVisibleAndRestoreSize`), which can't run while
+        // this thread is parked here. An unbounded wait turned every `die`
+        // into a silent freeze: no crash report, hotkeys dead, and nothing
+        // for launchd's KeepAlive to restart. Give the cleanup a moment
+        // (it does run when `die` comes from a background thread), then
+        // crash for real.
+        _ = semaphore.wait(timeout: .now() + dieCleanupTimeout)
     }
     fatalError("\n" + message)
 }

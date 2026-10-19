@@ -102,23 +102,6 @@ private func insertMovedWindowPositionally(
     layout.place(window.windowId, at: .single(lane: cell.lane, slot: insertAt))
 }
 
-/// Per-window alternation state for `stacking-move` on the lane axis.
-/// Same window + same direction → toggle between MERGE-AS-ROW (move into
-/// the neighbour column as a new row) and ADD-NEW-TILE (insert a new
-/// column between source and neighbour). Direction change OR window
-/// change resets the counter, and the first action of a fresh gesture is
-/// MERGE-AS-ROW — moving into an adjacent column inserts a row there, it
-/// never stacks focused on top of an existing window.
-@MainActor private var stackingMoveGesture: StackingMoveGesture? = nil
-
-@MainActor
-private struct StackingMoveGesture {
-    let windowId: WindowId
-    let direction: CardinalDirection
-    /// What the NEXT same-direction press should do.
-    let nextIsOverlap: Bool
-}
-
 /// `mur stacking-move <left|down|up|right>` — move the focused window in
 /// the given cardinal direction by swapping with its neighbour.
 ///
@@ -156,9 +139,6 @@ struct StackingMoveCommand: Command {
             let span = layout.placementForNewWindow(focusedLane: focusedLane)
             layout.place(window.windowId, at: span)
             StackingHud.shared.update(layout: layout, span: span)
-            // Reset the alternation so the next press starts a fresh
-            // OVERLAP-first gesture from the new tile.
-            stackingMoveGesture = nil
             Task { @MainActor in
                 let appId = window.app.rawAppBundleId ?? ""
                 let title = (try? await window.title) ?? ""
@@ -198,8 +178,6 @@ struct StackingMoveCommand: Command {
             //   - exactly ONE window → MERGE it into the adjacent column as
             //     a new row, emptying the source column. With no adjacent
             //     column it spills to the next workspace / monitor.
-            stackingMoveGesture = nil // lane moves are not a stateful gesture
-
             let myLane = signum > 0 ? current.lane1 : current.lane0
             let used = layout.usedLanes
             guard let visIdx = used.firstIndex(of: myLane) else { return .succ }
@@ -248,15 +226,16 @@ struct StackingMoveCommand: Command {
                 )
             }
         } else {
-            // Slot axis (top/bottom in landscape, left/right in portrait).
-            // Same alternation as the lane axis:
+            // Slot axis (top/bottom in landscape, left/right in portrait):
             //   - slot-mates exist (focused shares the cell) → EXTRACT
             //     focused into a fresh slot so they un-overlap.
-            //   - neighbour slot exists → alternate per same-direction
-            //     press: OVERLAP (focused moves to neighbour's slot,
-            //     sharing the cell) then ADD-NEW-TILE (insert new slot
-            //     between source and neighbour).
-            //   - edge, no slot-mates → shrink the row.
+            //   - neighbour slot exists → SWAP the two rows.
+            //   - edge, no slot-mates → next/prev workspace, else shrink.
+            //
+            // A swap, not "place at the neighbour's slot": `place` INSERTS
+            // (it pushes the occupant down a slot), so placing at slot+1
+            // put the neighbour at slot+2 and compaction then slid both
+            // back up — moving DOWN was a no-op while moving up worked.
             let myLane = current.lane0
             let mySlot = signum > 0 ? current.slot1 : current.slot0
             let slots = layout.slotCount(in: myLane)
@@ -274,33 +253,7 @@ struct StackingMoveCommand: Command {
                     slot0: insertAt, slot1: insertAt,
                 ))
             } else if neighborSlot >= 0 && neighborSlot < slots {
-                let dir = args.direction.val
-                let slotIsOverlap: Bool = if let g = stackingMoveGesture, g.windowId == window.windowId, g.direction == dir {
-                    g.nextIsOverlap
-                } else {
-                    true
-                }
-                stackingMoveGesture = StackingMoveGesture(
-                    windowId: window.windowId, direction: dir, nextIsOverlap: !slotIsOverlap,
-                )
-                if slotIsOverlap {
-                    // OVERLAP with the adjacent slot's window: place
-                    // focused at the same slot index — they share the
-                    // cell and z-order picks the front.
-                    layout.place(window.windowId, at: TileSpan(
-                        lane0: myLane, lane1: myLane,
-                        slot0: neighborSlot, slot1: neighborSlot,
-                    ))
-                } else {
-                    // ADD-NEW-TILE: insert a fresh slot between source
-                    // and neighbour; focused moves into it alone.
-                    let insertAt = signum > 0 ? mySlot + 1 : mySlot
-                    layout.insertSlot(in: myLane, at: insertAt)
-                    layout.place(window.windowId, at: TileSpan(
-                        lane0: myLane, lane1: myLane,
-                        slot0: insertAt, slot1: insertAt,
-                    ))
-                }
+                layout.swapSlots(in: myLane, mySlot, neighborSlot)
             } else {
                 // Edge of lane, no slot-mate, no neighbour slot → no
                 // in-workspace target. up/down → next/prev workspace;

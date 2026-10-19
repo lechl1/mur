@@ -434,12 +434,25 @@ final class StackingLayout {
     }
 
     /// Append a brand new lane at the trailing edge, growing
-    /// `shape.lanes` by 1. Returns the new lane's index. Lane weights
-    /// for the new lane default to 1.0 (the implicit fallback).
+    /// `shape.lanes` by 1. Returns the new lane's index. The new lane gets
+    /// a default column width.
     func appendLane() -> Int {
         let newIdx = shape.lanes
         shape = LayoutShape(orientation: shape.orientation, lanes: shape.lanes + 1)
+        fitLaneWeightsToShape()
         return newIdx
+    }
+
+    /// Keep the stored lane weights exactly `shape.lanes` long — padding
+    /// with default columns, trimming dropped ones — whenever the shape
+    /// changes. A shorter array once trapped `laneWeight` (index out of
+    /// range) and crashed mur at startup; `laneWeight` tolerates it now,
+    /// but `setLaneWeights` still rejects a mismatched count.
+    private func fitLaneWeightsToShape() {
+        guard var lw = _laneWeights else { return }
+        if lw.count > shape.lanes { lw.removeLast(lw.count - shape.lanes) }
+        while lw.count < shape.lanes { lw.append(Self.defaultColumnWidth) }
+        _laneWeights = lw
     }
 
     /// Insert a new lane at index 0, shifting every existing placement,
@@ -574,6 +587,7 @@ final class StackingLayout {
         var rebuiltWeights: [Int: [CGFloat]] = [:]
         for (lane, w) in slotWeights where lane < newShape.lanes { rebuiltWeights[lane] = w }
         shape = newShape
+        fitLaneWeightsToShape()
         placements = rebuilt
         slotWeights = rebuiltWeights
         zOrder.removeAll { evicted.contains($0) }
@@ -681,6 +695,22 @@ final class StackingLayout {
         var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
         weights[lane] = fraction
         setLaneWeights(weights)
+    }
+
+    /// mur — the absolute width a column OPENING beside `existing` (the
+    /// widths of the columns already there) should get.
+    ///
+    /// A narrow strip keeps fit-or-center: the newcomer takes its `natural`
+    /// width and the group re-centres. But once the existing columns FILL
+    /// the axis (total ≥ 1 — e.g. a lone column after a close), a natural
+    /// 1/3 would render that full-width column at 75% and the newcomer at
+    /// 25%. Instead the newcomer gets the existing columns' average width,
+    /// so it renders at an equal `1/(n+1)` share and the others shrink
+    /// proportionally: one full-width terminal + a new one → 50/50.
+    static func widthForNewColumn(natural: CGFloat, existing: [CGFloat]) -> CGFloat {
+        let total = existing.reduce(0, +)
+        guard !existing.isEmpty, total >= 1 - 1e-6 else { return natural }
+        return total / CGFloat(existing.count)
     }
 
     // MARK: Slot weights

@@ -51,6 +51,14 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   width", then "survivors preserve the total" (which left a 0.4-wide strip
   0.4 wide, the visible bug). Losing one ROW of a multi-row column still
   changes nothing: only a column closing redistributes.
+- **A column opening beside a FULL screen takes an equal share.** If the
+  existing columns already fill the lane axis (total ≥ 1), a newcomer gets
+  their average width (`StackingLayout.widthForNewColumn`), so it renders
+  at `1/(n+1)` and the others shrink proportionally — one full-width
+  terminal plus a new one is 50/50, not 75/25. A narrow strip still opens
+  the newcomer at its natural width and centres. Columns already on screen
+  keep their widths when a window joins: only the startup restore resets
+  widths to defaults.
 
 - **No empty columns.** A lane only exists while a window can actually
   render in it. `layoutWorkspaceWithStacking` prunes cells whose window is
@@ -158,6 +166,12 @@ bug. The three fallbacks all carry a workspace now:
   `dominantWorkspace(appId:)` — where that app lives — instead of staying
   put. Restore mode only: a window opened later really is new, and belongs
   on the workspace the user is looking at.
+
+Outside restore mode a window is **never** steered to a remembered
+workspace — a window the user opens joins the workspace it opened on
+(moving it made it vanish the moment it appeared). In restore mode, a
+window that opened after the startup batch is steered only on a match that
+names it (title / terminal session), never on the app-pool guess.
 
 **Restore is a window of time, not one batch** (naru's `RESTORE_SETTLE`).
 The coordinated restore is debounced 90ms, which catches every window that
