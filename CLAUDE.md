@@ -70,19 +70,24 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   — mur gives up after `autoUnminimizeGiveUpAfter` (2s) if the app insists.
   An explicit `macos-native-minimize` opts out (it records the window in
   `intentionallyMinimizedWindowIds`) and frees the cell instead.
-- **One window per cell; float first, mount a beat later.** Two windows may
+- **One window per cell; a window never starts floating.** Two windows may
   never share a `(lane, slot)` — they'd resolve to identical rects and render
   as one window swallowing the other. `StackingLayout.place` enforces this by
   pushing the occupant (and everything below it in the lane) down a slot, so a
-  placement INSERTS rather than lands on top. On top of that, a window that
-  opens while mur is already running is bound as a **floating** window at
-  registration and joins the grid ~90ms later from `runCoordinatedRestore`
-  (`pendingGridMountIds` in `StackingPlacement.swift`): the sync registration
-  path can't read a window title, so mounting there and then re-placing from
-  window memory moved the window twice — the visible "new window jumps across
-  the screen". Startup is exempt (one batch, `isStartup`). The restore also
-  ranks remembered lanes against the **current** layout's free lanes, never
-  back to column 0, so a newcomer can't be ranked onto an existing column.
+  placement INSERTS rather than lands on top. A new window is mounted into the
+  grid **synchronously at registration** (`tryRegisterInStackingLayout`) —
+  never parked as floating to be mounted later. An earlier "float first,
+  mount a beat later" scheme left windows floating whenever the later mount
+  never came (a window back from minimize/fullscreen re-registers with no
+  restore queued). The double move it guarded against (sync heuristic cell,
+  then the async restore's remembered cell) is avoided instead by
+  `openedLaterIds`: outside restore mode, a window opened while mur is running
+  keeps the cell it was mounted in and is only *remembered* by title. Only
+  apps that are floating by design (`floatByDefaultBundleIds`, known
+  non-resizable apps) or a window remembered as floating start floating. The
+  restore also ranks remembered lanes against the **current** layout's free
+  lanes, never back to column 0, so a newcomer can't be ranked onto an
+  existing column.
 
 - **Spring animations.** Windows glide to their target rects via
   `WindowAnimator` (critically-damped spring, stiffness 800) rather than an

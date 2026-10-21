@@ -115,44 +115,26 @@ func tryRegisterInStackingLayout(_ window: Window) {
             break
     }
 
-    // mur — FLOAT FIRST, MOUNT A BEAT LATER. A window that opens while mur
-    // is already running is left floating exactly where the app put it, and
-    // joins the grid from `runCoordinatedRestore` ~90ms later. Mounting it
-    // synchronously here means placing it from the sync heuristic (no title
-    // available yet), then moving it AGAIN when the async restore reads the
-    // title and finds its remembered cell — the double hop is the visible
-    // "new window jumps across the screen and lands on top of another one".
-    // Deferring collapses that into a single move from the opening position.
-    // Startup is exempt: every existing window is registered in one batch
-    // there, and floating them all first would just churn the whole screen.
-    if !isStartup, case .tilingContainer? = window.parent?.cases {
-        pendingGridMountIds.insert(window.windowId)
-        window.bindAsFloatingWindow(to: workspace)
-        return
-    }
+    // mur — A WINDOW NEVER STARTS FLOATING. It is mounted into the grid
+    // right here, synchronously, at the heuristic cell — never parked as a
+    // floating window to be mounted "a beat later". That deferral left
+    // windows floating whenever the later mount didn't come (a window back
+    // from minimize / fullscreen re-registers here with no restore queued),
+    // and was only there to avoid a second hop when the async restore found
+    // a remembered cell. That hop is avoided at the source instead: outside
+    // restore mode a window opened while mur is running keeps this cell
+    // (see `openedLaterIds` in `runCoordinatedRestore`).
     mountInStackingLayout(window, in: workspace)
 }
 
-/// mur — windows that opened while mur was running and are waiting to be
-/// mounted into the grid by the next coordinated restore. They're bound as
-/// floating windows meanwhile, so they render where the app opened them.
-@MainActor private var pendingGridMountIds: Set<WindowId> = []
+/// mur — windows registered while mur was already running (not part of the
+/// startup batch), waiting for the coordinated restore to look at them.
+@MainActor private var openedLaterIds: Set<WindowId> = []
 
-/// Forget a pending mount (the window died before the restore ran).
+/// Forget a window that died before the restore ran.
 @MainActor
-func forgetPendingGridMount(_ windowId: WindowId) {
-    pendingGridMountIds.remove(windowId)
-}
-
-/// mur — mount a deferred window into the grid: rebind it to the tiling
-/// container it would have been in, then run the regular placement. Returns
-/// `false` if this window wasn't deferred (nothing to do).
-@MainActor
-private func flushPendingGridMount(_ window: Window, in workspace: Workspace) -> Bool {
-    guard pendingGridMountIds.remove(window.windowId) != nil else { return false }
-    window.bind(to: workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
-    mountInStackingLayout(window, in: workspace)
-    return true
+func forgetOpenedLater(_ windowId: WindowId) {
+    openedLaterIds.remove(windowId)
 }
 
 /// Make a window that was just moved to `workspace` visible there. A tiled
@@ -296,6 +278,7 @@ private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
 func restoreWindowStateOnRegister(_ window: Window) {
     guard config.experimentalStackingLayout else { return }
     pendingRestoreIds.insert(window.windowId)
+    if !isStartup { openedLaterIds.insert(window.windowId) }
     coordinatedRestoreTask?.cancel()
     coordinatedRestoreTask = Task { @MainActor in
         // The 90ms debounce exists for the startup registration loop. Once
@@ -348,23 +331,24 @@ private func runCoordinatedRestore() async {
 
     for id in ids {
         guard let window = Window.get(byId: id), let curWs = window.nodeWorkspace else {
-            forgetPendingGridMount(id)
+            forgetOpenedLater(id)
             continue
         }
-        // mur — a window that opened while mur was running has been floating
-        // where the app put it since registration; mount it into the grid
-        // now, and seed its last-applied rect with that opening position so
-        // the spring animation carries it into its cell instead of the
-        // animator treating this as a first placement and snapping.
-        let openedLater = flushPendingGridMount(window, in: curWs)
-        if openedLater {
-            if let opening = try? await window.getAxRect() {
-                window.lastAppliedLayoutPhysicalRect = opening
-            }
-        }
+        let openedLater = openedLaterIds.remove(id) != nil
         let appId = window.app.rawAppBundleId ?? ""
         let title = (try? await window.title) ?? ""
         let shape = curWs.stackingLayout.shape
+        // mur — a window the user opened while mur is running was mounted
+        // into the grid the moment it registered. Outside restore mode it
+        // stays in that cell: re-placing it from memory now would move it a
+        // second time — the "new window jumps across the screen". Just
+        // remember where it is, by its real title.
+        if openedLater, !isStartupRestore {
+            if let span = curWs.stackingLayout.placements[id] {
+                windowMemory.remember(appId: appId, title: title, workspace: curWs.name, shape: shape, span: span)
+            }
+            continue
+        }
         // mur — A TERMINAL'S TITLE IS NOT AN IDENTITY. Ghostty (with shell
         // integration, and claude on top of it) rewrites the title as work
         // progresses — "◐ Empty columns cleanup" one minute, something else
@@ -664,10 +648,6 @@ func persistWindowStateNow() async {
             )
         }
         for window in workspace.children.filterIsInstance(of: Window.self) {
-            // A window waiting for its deferred grid mount is floating only
-            // for the next few frames — recording that would restore it
-            // floating forever.
-            if pendingGridMountIds.contains(window.windowId) { continue }
             let title = (try? await window.title) ?? ""
             windowMemory.rememberFloating(
                 appId: window.app.rawAppBundleId ?? "", title: title,
