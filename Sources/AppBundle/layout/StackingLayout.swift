@@ -650,6 +650,18 @@ final class StackingLayout {
     /// runs ONCE per window, not on every refresh.
     var verifiedResizableWindows: Set<WindowId> = []
 
+    /// mur — the smallest size each window has been seen to accept, in
+    /// points (an app like Spotify refuses to go narrower than ~800px).
+    /// Learned from the post-layout fill check, only ever raised. Stored as
+    /// a full size so it survives an orientation change: the lane-axis
+    /// component is what `laneExtents` honours.
+    private(set) var minimumSizes: [WindowId: CGSize] = [:]
+
+    func raiseMinimumSize(_ windowId: WindowId, to size: CGSize) {
+        let old = minimumSizes[windowId] ?? .zero
+        minimumSizes[windowId] = CGSize(width: max(old.width, size.width), height: max(old.height, size.height))
+    }
+
     func laneWeight(lane: Int) -> CGFloat {
         guard lane >= 0, lane < shape.lanes else { return Self.defaultColumnWidth }
         // The stored array can be shorter than `shape.lanes` (shape changed
@@ -768,11 +780,7 @@ extension StackingLayout {
               let visIdx1 = used.firstIndex(of: span.lane1) else { return nil }
 
         // Lane axis: weighted partition over USED lanes only.
-        let nLanes = CGFloat(used.count)
-        let totalLaneGap = max(0, nLanes - 1) * innerGap
-        let usedLaneWeights = used.map { laneWeight(lane: $0) }
-        let totalLaneWeight = usedLaneWeights.reduce(0, +)
-        guard totalLaneWeight > 0 else { return nil }
+        guard used.map({ laneWeight(lane: $0) }).reduce(0, +) > 0 else { return nil }
 
         // Slot axis: weighted partition of `lane0` (canonical for multi-lane
         // spans). All covered lanes are grown to at least `slot1+1` slots
@@ -785,31 +793,15 @@ extension StackingLayout {
         guard totalWeight > 0 else { return nil }
         let totalSlotGap = max(0, CGFloat(slots - 1)) * innerGap
 
-        // Lane-axis prefix (weights up to span start) and extent (weights
-        // covered by the span). For single-lane spans this collapses to
-        // `extent = usedLaneWeights[visIdx0]`.
-        var lanePrefix: CGFloat = 0
-        for i in 0 ..< visIdx0 { lanePrefix += usedLaneWeights[i] }
-        var laneExtent: CGFloat = 0
-        for i in visIdx0 ... visIdx1 { laneExtent += usedLaneWeights[i] }
-
-        // mur — fit-or-center (naru-style, carousel disabled). Lane weights
-        // are absolute fractions of the lane-axis extent (default 1.0). If
-        // the used columns' desired total ≤ 1 the strip renders at those
-        // widths and is CENTERED (empty space split evenly on both sides);
-        // if it exceeds 1 the columns shrink by a shared factor to fill.
-        // `denom = max(1, totalLaneWeight)` unifies both: for the common
-        // default-weight case totalLaneWeight ≥ 1 so denom folds to a plain
-        // fill (offset 0) and existing layouts are unchanged.
         let landscape = shape.orientation == .landscape
         let laneAxisFull = landscape ? available.width : available.height
-        let usableLane = laneAxisFull - totalLaneGap
-        let denom = max(1.0, totalLaneWeight)
-        let laneScale = usableLane / denom
-        let laneContentTotal = totalLaneWeight * laneScale + totalLaneGap
-        let laneCenterOffset = max(0, (laneAxisFull - laneContentTotal) / 2)
-        let laneStartLow = laneCenterOffset + lanePrefix * laneScale + CGFloat(visIdx0) * innerGap
-        let laneSpan = laneExtent * laneScale + CGFloat(visIdx1 - visIdx0) * innerGap
+        let (laneCenterOffset, extents) = laneExtents(used: used, laneAxisFull: laneAxisFull, innerGap: innerGap)
+        var lanePrefix: CGFloat = 0
+        for i in 0 ..< visIdx0 { lanePrefix += extents[i] }
+        var laneExtent: CGFloat = 0
+        for i in visIdx0 ... visIdx1 { laneExtent += extents[i] }
+        let laneStartLow = laneCenterOffset + lanePrefix + CGFloat(visIdx0) * innerGap
+        let laneSpan = laneExtent + CGFloat(visIdx1 - visIdx0) * innerGap
 
         switch shape.orientation {
             case .landscape:
@@ -835,6 +827,54 @@ extension StackingLayout {
                 // Never emit a negative size (e.g. gaps wider than the axis).
                 return Rect(topLeftX: x0, topLeftY: y, width: max(0, w), height: max(0, laneSpan))
         }
+    }
+
+    /// The rendered lane-axis extent (points, gaps excluded) of each used
+    /// lane, and the offset of the first one. Shared by `resolveRect` and
+    /// `cellAt` so hit testing matches what's on screen.
+    ///
+    /// mur — fit-or-center (naru-style, carousel disabled). Lane weights are
+    /// absolute fractions of the lane-axis extent. If the used columns'
+    /// desired total ≤ 1 the strip renders at those widths and is CENTERED;
+    /// if it exceeds 1 the columns shrink by a shared factor to fill
+    /// (`max(1, total)` unifies both).
+    ///
+    /// mur — MINIMUM SIZES WIN. A column holding a window that can't go
+    /// narrower (`minimumSizes`) is widened to that minimum, and the room
+    /// comes first from empty screen (a centred strip just gets wider), then
+    /// out of the other columns in proportion to their widths — never below
+    /// their own minimums. Without this the window overflows its cell
+    /// and runs off the screen edge or under its neighbour. If the minimums
+    /// alone exceed the screen there is nothing left to give; they overflow.
+    func laneExtents(used: [Int], laneAxisFull: CGFloat, innerGap: CGFloat) -> (offset: CGFloat, extents: [CGFloat]) {
+        let totalLaneGap = max(0, CGFloat(used.count - 1)) * innerGap
+        let usable = laneAxisFull - totalLaneGap
+        let weights = used.map { laneWeight(lane: $0) }
+        let scale = usable / max(1.0, weights.reduce(0, +))
+        let base = weights.map { $0 * scale }
+        let landscape = shape.orientation == .landscape
+        let mins = used.map { lane in
+            windows(in: lane).reduce(CGFloat(0)) { acc, id in
+                guard let span = placements[id], span.lane0 == span.lane1, let size = minimumSizes[id] else { return acc }
+                return max(acc, landscape ? size.width : size.height)
+            }
+        }
+        // Pin each lane whose share would fall below its minimum, then
+        // re-share what's left among the rest, until nothing new is pinned.
+        var pinned = Set<Int>()
+        var extents = base
+        while true {
+            let pinnedTotal = pinned.reduce(CGFloat(0)) { $0 + mins[$1] }
+            let freeBase = base.indices.filter { !pinned.contains($0) }.reduce(CGFloat(0)) { $0 + base[$1] }
+            let room = usable - pinnedTotal
+            let k = freeBase > 0 ? min(1, max(0, room) / freeBase) : 1
+            let newlyPinned = base.indices.filter { !pinned.contains($0) && base[$0] * k < mins[$0] }
+            for i in base.indices { extents[i] = pinned.contains(i) ? mins[i] : base[i] * k }
+            if newlyPinned.isEmpty { break }
+            pinned.formUnion(newlyPinned)
+        }
+        let content = extents.reduce(0, +) + totalLaneGap
+        return (max(0, (laneAxisFull - content) / 2), extents)
     }
 }
 
@@ -867,16 +907,12 @@ extension StackingLayout {
                 usableMain = available.height - totalLaneGap
                 usableSecAxis = available.width
         }
-        // Walk lane partition (fit-or-center: mirror resolveRect).
-        let denom = max(1.0, totalLW)
-        let laneScale = usableMain / denom
-        let laneContentTotal = totalLW * laneScale + totalLaneGap
-        let laneAxisFull = usableMain + totalLaneGap
-        let laneCenterOffset = max(0, (laneAxisFull - laneContentTotal) / 2)
+        // Walk lane partition (mirrors resolveRect).
+        let (laneCenterOffset, extents) = laneExtents(used: used, laneAxisFull: usableMain + totalLaneGap, innerGap: innerGap)
         var c = mainStart + laneCenterOffset
         var lane = used.last ?? 0
         for (i, l) in used.enumerated() {
-            let w = usedLW[i] * laneScale
+            let w = extents[i]
             if mainPt < c + w { lane = l; break }
             c += w + innerGap
         }

@@ -238,7 +238,7 @@ private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
     }
 
     // Place heuristically for now (sync, no title). The PRECISE per-title
-    // state — floating vs tiled, and where — is restored asynchronously by
+    // cell is restored asynchronously by
     // `restoreWindowStateOnRegister(_:)`, which can await the window title
     // off this hot path. Anchor the heuristic to the focused tiled window's
     // lane if any (cached `focus`, sync).
@@ -323,7 +323,6 @@ private func runCoordinatedRestore() async {
     // Remembered cells still up for grabs, per app — see the fallback below.
     var appSpanPool: [String: [StoredWindowState]] = [:]
     var tiled: [Tiled] = []
-    var floaters: [(window: Window, workspace: Workspace)] = []
     // Synthetic lanes for windows sent to their app's workspace without a
     // remembered cell: high enough to rank after every real lane.
     let unrankedLaneBase = Int.max - 1000
@@ -363,8 +362,7 @@ private func runCoordinatedRestore() async {
         // Whether `recalled` names THIS window (title / terminal session)
         // or just a cell its app used to have (the pool below).
         var isAppPoolGuess = false
-        if recalled == nil || recalled?.floating == false,
-           sessionRestoreTerminalBundleIds.contains(appId),
+        if sessionRestoreTerminalBundleIds.contains(appId),
            // `resolveTerminalCwd`, not `window.cwd`: a session mur itself
            // relaunched runs `claude` directly, so no shell integration runs
            // and Ghostty NEVER publishes AXDocument for it. Asking the window
@@ -439,11 +437,7 @@ private func runCoordinatedRestore() async {
         let steer = isStartupRestore && !(openedLater && isAppPoolGuess)
         let targetWs = (steer && !state.workspace.isEmpty && state.workspace != curWs.name)
             ? Workspace.get(byName: state.workspace) : curWs
-        if state.floating {
-            floaters.append((window, targetWs))
-        } else {
-            tiled.append(Tiled(window: window, workspace: targetWs, lane: state.span.lane0, slot: state.span.slot0))
-        }
+        tiled.append(Tiled(window: window, workspace: targetWs, lane: state.span.lane0, slot: state.span.slot0))
     }
 
     // Reconstruct each workspace's columns/rows from the tiled windows.
@@ -532,19 +526,6 @@ private func runCoordinatedRestore() async {
         }
     }
 
-    // Re-float the floaters, centred on their monitor.
-    for f in floaters {
-        f.window.nodeWorkspace?.stackingLayout.remove(f.window.windowId)
-        f.window.bindAsFloatingWindow(to: f.workspace)
-        let monRect = f.workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
-        let size: CGSize = (try? await f.window.getAxRect())?.size
-            ?? f.window.lastFloatingSize
-            ?? CGSize(width: monRect.width / 2, height: monRect.height / 2)
-        let cx = monRect.topLeftX + (monRect.width - size.width) / 2
-        let cy = monRect.topLeftY + (monRect.height - size.height) / 2
-        f.window.setAxFrame(CGPoint(x: cx, y: cy), size)
-    }
-
     windowMemory.save()
 
     // Record/refresh each terminal's session (cwd + position + claude) so a
@@ -595,8 +576,8 @@ var isRestoringWindowState: Bool {
 // MARK: - Persisting window state
 
 /// mur — persist EVERYTHING mur needs to rebuild this screen after a
-/// restart: each tiled window's cell and each floating window's mode
-/// (`WindowMemory`, keyed by app + title), plus each terminal's session
+/// restart: each tiled window's cell (`WindowMemory`, keyed by app +
+/// title; floating is never persisted), plus each terminal's session
 /// (cwd + span, `TerminalSessionStore`).
 ///
 /// Individual commands remember the window they acted on, but a move or a
@@ -645,13 +626,6 @@ func persistWindowStateNow() async {
             windowMemory.remember(
                 appId: window.app.rawAppBundleId ?? "", title: title,
                 workspace: workspace.name, shape: layout.shape, span: span,
-            )
-        }
-        for window in workspace.children.filterIsInstance(of: Window.self) {
-            let title = (try? await window.title) ?? ""
-            windowMemory.rememberFloating(
-                appId: window.app.rawAppBundleId ?? "", title: title,
-                workspace: workspace.name, shape: layout.shape,
             )
         }
     }

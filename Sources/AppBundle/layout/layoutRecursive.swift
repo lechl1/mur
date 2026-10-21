@@ -73,13 +73,11 @@ extension Workspace {
             stackingLayout.shape.orientation == .landscape ? .v : .h,
         ))
 
-        // mur — NO auto-grow-to-fit. A column/row is never grown to fit a
-        // window's min size or the screen. Each column keeps its desired
-        // lane-axis extent (lane weight, per column) and each window keeps
-        // its desired slot-axis extent (slot weight, per window); fit-or-
-        // center in `resolveRect` scales them proportionally and caps at the
-        // desired size. A window larger than its cell simply overflows — we
-        // don't reset the user's chosen size to grow it.
+        // mur — a column is never grown to fill the screen (fit-or-center),
+        // but it IS widened to a window's minimum size, once the fill check
+        // below has learned it (`StackingLayout.minimumSizes`); the other
+        // columns give way. The stored lane weights are left alone, so the
+        // user's chosen widths come back once that window is gone.
 
         // mur — collect every window's target rect FIRST, then hand the whole
         // set to the animator after the loop. Computing all targets up front
@@ -126,12 +124,6 @@ extension Workspace {
                         let cx = monRect.topLeftX + (monRect.width - actual.width) / 2
                         let cy = monRect.topLeftY + (monRect.height - actual.height) / 2
                         window.setAxFrame(CGPoint(x: cx, y: cy), actual.size)
-                        // Persist floating so a restart restores it floating.
-                        let title = (try? await window.title) ?? ""
-                        windowMemory.rememberFloating(
-                            appId: appId, title: title, workspace: workspace.name, shape: workspace.stackingLayout.shape,
-                        )
-                        windowMemory.save()
                     } else {
                         workspace.stackingLayout.verifiedResizableWindows.insert(windowId)
                     }
@@ -317,7 +309,8 @@ extension TilingContainer {
 // MARK: - Post-layout fill pass
 
 /// mur — a window doesn't always end up the size mur asked for. An app with
-/// a minimum width clamps a narrow column and keeps the size it had; others
+/// a minimum width clamps a narrow column and keeps the size it had (that
+/// minimum is learned here and honoured by the layout); others
 /// simply drop a resize that arrives while they're busy launching. Either
 /// way the window stops filling its column and leaves a gap beside it, which
 /// also throws off how centred the strip looks.
@@ -365,5 +358,22 @@ private func scheduleFillCheck(window: Window, target: Rect, in workspace: Works
         }
         fillAttempts[windowId] = (target, (fillAttempts[windowId]?.count ?? 0) + 1)
         window.setAxFrame(target.topLeftCorner, target.size)
+        // mur — still BIGGER than its cell after being told again: the app
+        // has a minimum size (Spotify won't go below ~800px wide). Asking a
+        // third time changes nothing, so record the minimum and lay out
+        // again — `laneExtents` widens the column to fit and the others give
+        // way. Re-checked after a beat so an app that merely dropped the
+        // first resize while launching isn't mistaken for one with a minimum.
+        guard actual.width > target.width + fillTolerance || actual.height > target.height + fillTolerance else { return }
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        if WindowAnimator.shared.isDrivingFrame(windowId) || windowId == currentlyManipulatedWithMouseWindowId { return }
+        guard let window = Window.get(byId: windowId), let layout = window.nodeWorkspace?.stackingLayout,
+              layout.placements[windowId] != nil,
+              let again = try? await window.getAxRect() else { return }
+        let minWidth = again.width > target.width + fillTolerance ? again.width : 0
+        let minHeight = again.height > target.height + fillTolerance ? again.height : 0
+        guard minWidth > 0 || minHeight > 0 else { return }
+        layout.raiseMinimumSize(windowId, to: CGSize(width: minWidth, height: minHeight))
+        try? await layoutWorkspaces()
     }
 }

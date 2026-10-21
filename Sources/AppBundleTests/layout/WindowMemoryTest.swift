@@ -10,13 +10,13 @@ struct WindowMemoryTest {
             .appendingPathComponent("mur-test-\(UUID().uuidString).json")
     }
 
-    @Test func roundTripsTiledAndFloatingKeyedByTitle() {
+    @Test func roundTripsTiledKeyedByTitle() {
         let url = tempURL()
         defer { try? FileManager.default.removeItem(at: url) }
         let shape = LayoutShape.landscapeDefault
         let mem = WindowMemory(storeURL: url)
         mem.remember(appId: "com.app", title: "Doc A", workspace: "3", shape: shape, span: .single(lane: 2, slot: 1))
-        mem.rememberFloating(appId: "com.app", title: "Doc B", workspace: "web", shape: shape)
+        mem.remember(appId: "com.app", title: "Doc B", workspace: "web", shape: shape, span: .single(lane: 0, slot: 0))
         mem.save()
 
         // Reload from disk — mode + span + workspace survive, and the title
@@ -27,7 +27,7 @@ struct WindowMemoryTest {
         #expect(a?.floating == false)
         #expect(a?.span == TileSpan.single(lane: 2, slot: 1))
         #expect(a?.workspace == "3")
-        #expect(b?.floating == true)
+        #expect(b?.span == TileSpan.single(lane: 0, slot: 0))
         #expect(b?.workspace == "web")
         #expect(reloaded.recall(appId: "com.app", title: "Doc C", shape: shape) == nil)
     }
@@ -45,11 +45,10 @@ struct WindowMemoryTest {
         mem.remember(appId: "com.app", title: "w3 right", workspace: "3", shape: shape, span: .single(lane: 1, slot: 0))
         mem.remember(appId: "com.app", title: "w3 left", workspace: "3", shape: shape, span: .single(lane: 0, slot: 0))
         mem.remember(appId: "com.app", title: "w1 left", workspace: "1", shape: shape, span: .single(lane: 0, slot: 0))
-        mem.rememberFloating(appId: "com.app", title: "floater", workspace: "1", shape: shape)
         mem.remember(appId: "other.app", title: "nope", workspace: "1", shape: shape, span: .single(lane: 0, slot: 0))
 
         let pool = mem.recallTiledByApp(appId: "com.app", shape: shape)
-        #expect(pool.map(\.workspace) == ["1", "3", "3"]) // floater and other app excluded
+        #expect(pool.map(\.workspace) == ["1", "3", "3"]) // other app excluded
         #expect(pool.map { $0.span.lane0 } == [0, 0, 1])
     }
 
@@ -69,18 +68,5 @@ struct WindowMemoryTest {
         mem.remember(appId: "com.app", title: "d", workspace: "1", shape: shape, span: .single(lane: 1, slot: 0))
         #expect(mem.dominantWorkspace(appId: "com.app", shape: shape) == "1")
         #expect(mem.dominantWorkspace(appId: "unknown.app", shape: shape) == nil)
-    }
-
-    @Test func rememberFloatingKeepsPreviousSpan() {
-        let url = tempURL()
-        defer { try? FileManager.default.removeItem(at: url) }
-        let shape = LayoutShape.landscapeDefault
-        let mem = WindowMemory(storeURL: url)
-        mem.remember(appId: "x", title: "t", workspace: "1", shape: shape, span: .single(lane: 3, slot: 0))
-        mem.rememberFloating(appId: "x", title: "t", workspace: "1", shape: shape)
-        let s = mem.recall(appId: "x", title: "t", shape: shape)
-        #expect(s?.floating == true)
-        #expect(s?.span == TileSpan.single(lane: 3, slot: 0)) // span preserved for a later re-tile
-        #expect(s?.workspace == "1")
     }
 }

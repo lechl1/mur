@@ -31,7 +31,7 @@ struct StackingFloatCommand: Command {
         layout.remove(window.windowId)
         window.bindAsFloatingWindow(to: workspace)
         // Async work: center the window on its monitor + persist the
-        // memory clearance. Both touch AX or disk; do them off the
+        // siblings' new cells. Both touch AX or disk; do them off the
         // request-handling path.
         Task { @MainActor in
             // Center the now-floating window on the workspace's monitor.
@@ -45,13 +45,9 @@ struct StackingFloatCommand: Command {
             let cy = monRect.topLeftY + (monRect.height - size.height) / 2
             window.setAxFrame(CGPoint(x: cx, y: cy), size)
 
-            let appId = window.app.rawAppBundleId ?? ""
-            let title = (try? await window.title) ?? ""
-            // Persist FLOATING (not forget) so a restart restores this
-            // window as floating rather than re-tiling it.
-            windowMemory.rememberFloating(appId: appId, title: title, workspace: workspace.name, shape: layout.shape)
-            windowMemory.save()
-            // Siblings' slots shift with a move/resize too — sweep the layout.
+            // Floating isn't persisted — a window never starts floating, so a
+            // restart tiles it again. The siblings' slots shifted, though:
+            // sweep the layout.
             persistWindowStateSoon()
         }
         return .succ

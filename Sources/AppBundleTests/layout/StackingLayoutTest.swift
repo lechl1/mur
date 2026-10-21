@@ -514,6 +514,57 @@ struct StackingLayoutTest {
         #expect(abs(StackingLayout.widthForNewColumn(natural: 1.0 / 3.0, existing: [0.25, 0.75]) - 0.5) < 0.001)
     }
 
+    // MARK: a window's minimum size is respected
+
+    @Test func columnWidensToItsWindowsMinimumAndOthersGiveWay() {
+        // Three columns filling 900px at 300 each; the third window can't go
+        // below 400 → it gets 400, the other two split the remaining 500.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        for (i, id) in [1, 2, 3].enumerated() {
+            layout.place(UInt32(id), at: .soleSlot(lane: i))
+            layout.setLaneAbsoluteWidth(1.0 / 3.0, lane: i)
+        }
+        layout.raiseMinimumSize(3, to: CGSize(width: 400, height: 0))
+        let r1 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        let r2 = layout.resolveRect(for: 2, in: landscapeAvail, innerGap: 0)
+        let r3 = layout.resolveRect(for: 3, in: landscapeAvail, innerGap: 0)
+        #expect(abs((r3?.width ?? 0) - 400) < 0.001)
+        #expect(abs((r1?.width ?? 0) - 250) < 0.001)
+        #expect(abs((r2?.width ?? 0) - 250) < 0.001)
+        // Still edge to edge — nothing runs off the screen.
+        #expect(abs((r3.map { $0.topLeftX + $0.width } ?? 0) - 900) < 0.001)
+        #expect(layout.cellAt(point: CGPoint(x: 550, y: 10), in: landscapeAvail)?.lane == 2)
+    }
+
+    @Test func minimumWidensACentredStripBeforeSqueezingNeighbours() {
+        // Two 0.3 columns (540 of 900, centred); a 400 minimum on the second
+        // just makes the strip 670 wide, still centred.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.setLaneAbsoluteWidth(0.3, lane: 0)
+        layout.setLaneAbsoluteWidth(0.3, lane: 1)
+        layout.raiseMinimumSize(2, to: CGSize(width: 400, height: 0))
+        let r1 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        let r2 = layout.resolveRect(for: 2, in: landscapeAvail, innerGap: 0)
+        #expect(abs((r1?.width ?? 0) - 270) < 0.001)
+        #expect(abs((r2?.width ?? 0) - 400) < 0.001)
+        #expect(abs((r1?.topLeftX ?? 0) - 115) < 0.001)
+    }
+
+    @Test func minimumIsTheLaneAxisInPortrait() {
+        // In portrait lanes are rows, so the minimum HEIGHT is what counts.
+        let layout = StackingLayout(shape: .portraitDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.setLaneAbsoluteWidth(0.5, lane: 0)
+        layout.setLaneAbsoluteWidth(0.5, lane: 1)
+        layout.raiseMinimumSize(2, to: CGSize(width: 9999, height: 600))
+        let r2 = layout.resolveRect(for: 2, in: portraitAvail, innerGap: 0)
+        #expect(abs((r2?.height ?? 0) - 600) < 0.001)
+        #expect(abs((r2?.width ?? 0) - 600) < 0.001)
+    }
+
     @Test func narrowColumnCentersPortrait() {
         let layout = StackingLayout(shape: .portraitDefault)
         layout.place(1, at: .soleSlot(lane: 0))

@@ -118,9 +118,14 @@ final class WindowMemory {
 
     // MARK: lookup
 
-    /// The remembered mode for this window, if any.
+    /// The remembered cell for this window, if any.
+    ///
+    /// mur — a FLOATING entry is a miss: a window never starts floating, not
+    /// even on restore. Those entries were mostly written while a window was
+    /// only briefly floating (the old float-first mount, an auto-float), and
+    /// replaying them pinned windows floating across every restart.
     func recall(appId: String, title: String, shape: LayoutShape) -> StoredWindowState? {
-        entries[shape]?[WindowMemoryKey(appId: appId, windowTitle: title)]
+        entries[shape]?[WindowMemoryKey(appId: appId, windowTitle: title)].flatMap { $0.floating ? nil : $0 }
     }
 
     /// mur — every TILED state remembered for `appId`, ordered by WORKSPACE
@@ -181,17 +186,6 @@ final class WindowMemory {
         let key = WindowMemoryKey(appId: appId, windowTitle: title)
         var byShape = entries[shape] ?? [:]
         byShape[key] = StoredWindowState(floating: false, span: span, workspace: workspace)
-        entries[shape] = byShape
-    }
-
-    /// Remember the window as FLOATING in `workspace`, keeping any
-    /// previously-remembered span so a later re-tile can return it to its
-    /// old cell.
-    func rememberFloating(appId: String, title: String, workspace: String, shape: LayoutShape) {
-        let key = WindowMemoryKey(appId: appId, windowTitle: title)
-        var byShape = entries[shape] ?? [:]
-        let span = byShape[key]?.span ?? .soleSlot(lane: 0)
-        byShape[key] = StoredWindowState(floating: true, span: span, workspace: workspace)
         entries[shape] = byShape
     }
 

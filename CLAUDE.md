@@ -30,6 +30,16 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   centered; two → fill; three-plus → shrink to fit. A lone terminal (`1/3` via
   `setLaneAbsoluteWidth`) renders centered. The slot axis (rows within a
   column) still fills the column. `cellAt` mirrors the same math.
+- **A window's minimum size wins.** Some apps refuse to go narrower than a
+  minimum (Spotify: ~800px). The post-layout fill check
+  (`scheduleFillCheck`) notices a window still bigger than its cell after
+  being told twice, records it in `StackingLayout.minimumSizes`, and lays out
+  again. `StackingLayout.laneExtents` (shared by `resolveRect` and `cellAt`)
+  widens that column to the minimum, taking the room first from empty screen
+  (a centred strip grows) and then from the other columns in proportion to
+  their widths, never below their own minimums. Stored lane weights are not
+  touched. Only the lane-axis component counts (width in landscape, height in
+  portrait).
 - **Resize-towards-center.** Mouse-resizing a column's lane-axis edge sets its
   **absolute** width from the dragged extent (`StackingResize.snap`); neighbours
   keep their widths and fit-or-center re-centers the strip, so a column grows /
@@ -84,7 +94,11 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   `openedLaterIds`: outside restore mode, a window opened while mur is running
   keeps the cell it was mounted in and is only *remembered* by title. Only
   apps that are floating by design (`floatByDefaultBundleIds`, known
-  non-resizable apps) or a window remembered as floating start floating. The
+  non-resizable apps) start floating. **Floating is never persisted or
+  restored**: `WindowMemory.recall` treats an old floating entry as a miss.
+  Replaying floating state is how windows that were only briefly floating
+  (the float-first mount, an auto-float) stayed floating across every
+  restart. The
   restore also ranks remembered lanes against the **current** layout's free
   lanes, never back to column 0, so a newcomer can't be ranked onto an
   existing column.
