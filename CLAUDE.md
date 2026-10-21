@@ -99,7 +99,11 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   `openedLaterIds`: outside restore mode, a window opened while mur is running
   keeps the cell it was mounted in and is only *remembered* by title. Only
   apps that are floating by design (`floatByDefaultBundleIds`, known
-  non-resizable apps) start floating. **Floating is never persisted or
+  non-resizable apps) start floating. **In the grid ⇒ tiled in the tree**
+  (`tileInTreeIfInGrid`, enforced on every layout): the inherited dialog
+  heuristic floats a window that registers while it looks like a dialog
+  (Spotify while hidden or launching), the grid mounted it anyway, and it
+  rendered tiled while drag / `resize` / `list-windows` called it floating. **Floating is never persisted or
   restored**: `WindowMemory.recall` treats an old floating entry as a miss.
   Replaying floating state is how windows that were only briefly floating
   (the float-first mount, an auto-float) stayed floating across every

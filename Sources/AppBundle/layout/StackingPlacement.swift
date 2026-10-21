@@ -125,6 +125,19 @@ func tryRegisterInStackingLayout(_ window: Window) {
     // restore mode a window opened while mur is running keeps this cell
     // (see `openedLaterIds` in `runCoordinatedRestore`).
     mountInStackingLayout(window, in: workspace)
+    tileInTreeIfInGrid(window, in: workspace)
+}
+
+/// mur — a window the grid placed must be TILED in the tree too. The
+/// inherited dialog heuristic binds a window as floating when it registers
+/// at a moment it looks like a dialog (Spotify reports a dialog subrole
+/// while its app is hidden or still launching); the grid then mounted it
+/// anyway. It rendered tiled, but everything that asks `isFloating` — mouse
+/// drag, `resize`, `list-windows` — treated it as a floating window.
+@MainActor
+func tileInTreeIfInGrid(_ window: Window, in workspace: Workspace) {
+    guard window.isFloating, workspace.stackingLayout.placements[window.windowId] != nil else { return }
+    window.bind(to: workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
 }
 
 /// mur — windows registered while mur was already running (not part of the
@@ -460,7 +473,8 @@ private func runCoordinatedRestore() async {
         // Detach every window from wherever it is (incl. other workspaces).
         for t in group {
             t.window.nodeWorkspace?.stackingLayout.remove(t.window.windowId)
-            if t.window.nodeWorkspace != workspace {
+            // Tiled in the tree as well (see `tileInTreeIfInGrid`).
+            if t.window.nodeWorkspace != workspace || t.window.isFloating {
                 t.window.bind(to: workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
             }
         }

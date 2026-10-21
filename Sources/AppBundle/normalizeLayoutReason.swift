@@ -39,6 +39,8 @@ private func validateStillPopups() async throws {
         if try await popup.isWindowHeuristic(windowLevel) {
             try await popup.relayoutWindow(on: focus.workspace)
             try await tryOnWindowDetected(popup)
+            // mur — it registered as a popup, so it never got a grid cell.
+            tryRegisterInStackingLayout(popup)
         }
     }
 }

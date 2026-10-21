@@ -60,6 +60,11 @@ extension Workspace {
     private func layoutWorkspaceWithStacking() async throws {
         let context = LayoutContext(self)
         pruneStackingLayout()
+        // In the grid ⇒ tiled in the tree, whatever path put it there. Every
+        // deliberate float removes the window from the grid first.
+        for windowId in stackingLayout.zOrder {
+            if let window = Window.get(byId: windowId) { tileInTreeIfInGrid(window, in: self) }
+        }
         let rect = workspaceMonitor.visibleRectPaddedByOuterGaps
         // Reshape if monitor orientation has changed since last layout.
         let mon = rect
