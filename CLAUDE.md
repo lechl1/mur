@@ -43,7 +43,8 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   (a centred strip grows) and then from the other columns in proportion to
   their widths, never below their own minimums. Stored lane weights are not
   touched. Only the lane-axis component counts (width in landscape, height in
-  portrait).
+  portrait). The layout overview HUD (`StackingHud`) draws columns from
+  `laneExtents` too, never from the raw weights, so it matches the screen.
 - **Resize-towards-center.** Mouse-resizing a column's lane-axis edge sets its
   **absolute** width from the dragged extent (`StackingResize.snap`); neighbours
   keep their widths and fit-or-center re-centers the strip, so a column grows /

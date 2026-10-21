@@ -5,7 +5,8 @@ import SwiftUI
 /// placed via `mur stacking-move` / `mur stacking-resize` / `mur stacking-place`.
 /// Mirrors the on-screen layout faithfully:
 ///   - empty lanes are collapsed (only used lanes appear);
-///   - each lane's width is proportional to its `laneWeight`;
+///   - each lane's width is proportional to its rendered extent
+///     (`StackingLayout.laneExtents`, so minimum sizes count);
 ///   - each cell's secondary-axis size is proportional to its slot weight.
 ///
 /// The currently focused span is highlighted. Auto-dismisses 1.5s after
@@ -23,7 +24,17 @@ import SwiftUI
         timer?.invalidate()
         contentView?.subviews.removeAll()
         let used = layout.usedLanes
-        let laneWeights = used.map { layout.laneWeight(lane: $0) }
+        // The widths the columns actually RENDER at, not their stored weights:
+        // a column widened to a window's minimum size (Spotify won't go
+        // below ~800px) would otherwise look narrower here than on screen.
+        let laneWeights: [CGFloat]
+        if let monitor = Workspace.all.first(where: { $0.stackingLayout === layout })?.workspaceMonitor {
+            let rect = monitor.visibleRectPaddedByOuterGaps
+            let axis = layout.shape.orientation == .landscape ? rect.width : rect.height
+            laneWeights = layout.laneExtents(used: used, laneAxisFull: axis, innerGap: 0).extents
+        } else {
+            laneWeights = used.map { layout.laneWeight(lane: $0) }
+        }
         let slotsPerLane = used.map { max(1, layout.slotCount(in: $0)) }
         let slotWeights = zip(used, slotsPerLane).map { lane, slots in
             (0 ..< slots).map { layout.slotWeight(lane: lane, slot: $0) }
@@ -113,7 +124,7 @@ struct StackingHudView: View {
     }
 
     // The HUD mirrors the on-screen layout's proportions: lanes are
-    // sized by their `laneWeight` share of the total used-lane weight,
+    // sized by their share of the total rendered lane extent,
     // slots within a lane by their `slotWeight` share. A soft minimum
     // size floor keeps very-shrunk tiles visible (and lets them
     // visually grow back proportionally as the user re-grows them);
