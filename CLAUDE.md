@@ -32,8 +32,12 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   column) still fills the column. `cellAt` mirrors the same math.
 - **A window's minimum size wins.** Some apps refuse to go narrower than a
   minimum (Spotify: ~800px). The post-layout fill check
-  (`scheduleFillCheck`) notices a window still bigger than its cell after
-  being told twice, records it in `StackingLayout.minimumSizes`, and lays out
+  (`scheduleFillCheck`) notices a window still bigger than its cell, keeps
+  re-asking, and records `StackingLayout.minimumSizes` only when the answer
+  is unambiguous: a visible workspace, the same oversized size for ~1.5s,
+  and under 90% of the screen. A wrong minimum is never forgotten and pins
+  the column wide (Spotify once "learned" 2056px and covered the screen),
+  so a slow app or a hidden workspace must not teach one. Then it lays out
   again. `StackingLayout.laneExtents` (shared by `resolveRect` and `cellAt`)
   widens that column to the minimum, taking the room first from empty screen
   (a centred strip grows) and then from the other columns in proportion to

@@ -1,4 +1,5 @@
 import AppKit
+import Common
 
 extension Workspace {
     @MainActor
@@ -323,6 +324,9 @@ extension TilingContainer {
 @MainActor private var fillAttempts: [WindowId: (target: Rect, count: Int)] = [:]
 private let fillRetryLimit = 2
 private let fillTolerance: CGFloat = 2
+/// A learned minimum at or above this fraction of the screen isn't a
+/// minimum — the window is ignoring resizes. See `scheduleFillCheck`.
+private let maxLearnedMinimumFraction: CGFloat = 0.9
 
 @MainActor
 private func scheduleFillCheck(window: Window, target: Rect, in workspace: Workspace) {
@@ -359,21 +363,43 @@ private func scheduleFillCheck(window: Window, target: Rect, in workspace: Works
         fillAttempts[windowId] = (target, (fillAttempts[windowId]?.count ?? 0) + 1)
         window.setAxFrame(target.topLeftCorner, target.size)
         // mur — still BIGGER than its cell after being told again: the app
-        // has a minimum size (Spotify won't go below ~800px wide). Asking a
-        // third time changes nothing, so record the minimum and lay out
+        // may have a minimum size (Spotify won't go below ~800px wide).
+        // Asking forever changes nothing, so record the minimum and lay out
         // again — `laneExtents` widens the column to fit and the others give
-        // way. Re-checked after a beat so an app that merely dropped the
-        // first resize while launching isn't mistaken for one with a minimum.
+        // way. But a WRONG minimum is never forgotten and pins the column
+        // wide for good (Spotify learned "2056px" and covered the screen), so
+        // only learn one that is unambiguous:
+        //  - on a visible workspace (a hidden one's windows are parked in a
+        //    corner, not at the rect being judged);
+        //  - the same oversized size on every check for ~1.5s, so a slow
+        //    app still catching up (or one dropping a resize while
+        //    launching) isn't mistaken for a constrained one;
+        //  - less than `maxLearnedMinimumFraction` of the screen: a window
+        //    that stays full-screen-sized is ignoring mur, not small-limited.
         guard actual.width > target.width + fillTolerance || actual.height > target.height + fillTolerance else { return }
-        try? await Task.sleep(nanoseconds: 350_000_000)
-        if WindowAnimator.shared.isDrivingFrame(windowId) || windowId == currentlyManipulatedWithMouseWindowId { return }
-        guard let window = Window.get(byId: windowId), let layout = window.nodeWorkspace?.stackingLayout,
-              layout.placements[windowId] != nil,
-              let again = try? await window.getAxRect() else { return }
-        let minWidth = again.width > target.width + fillTolerance ? again.width : 0
-        let minHeight = again.height > target.height + fillTolerance ? again.height : 0
+        var observed = actual.size
+        for _ in 0 ..< 3 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            if WindowAnimator.shared.isDrivingFrame(windowId) || windowId == currentlyManipulatedWithMouseWindowId { return }
+            guard let window = Window.get(byId: windowId), let workspace = window.nodeWorkspace, workspace.isVisible,
+                  workspace.stackingLayout.placements[windowId] != nil,
+                  // Still the cell being judged — a relayout since moved on.
+                  window.lastAppliedLayoutPhysicalRect.map({ $0.topLeftCorner == target.topLeftCorner && $0.size == target.size }) == true,
+                  let again = try? await window.getAxRect(),
+                  abs(again.width - observed.width) <= fillTolerance,
+                  abs(again.height - observed.height) <= fillTolerance else { return }
+            observed = again.size
+            window.setAxFrame(target.topLeftCorner, target.size)
+        }
+        guard let window = Window.get(byId: windowId), let workspace = window.nodeWorkspace else { return }
+        let screen = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+        let minWidth = observed.width > target.width + fillTolerance
+            && observed.width < screen.width * maxLearnedMinimumFraction ? observed.width : 0
+        let minHeight = observed.height > target.height + fillTolerance
+            && observed.height < screen.height * maxLearnedMinimumFraction ? observed.height : 0
         guard minWidth > 0 || minHeight > 0 else { return }
-        layout.raiseMinimumSize(windowId, to: CGSize(width: minWidth, height: minHeight))
+        workspace.stackingLayout.raiseMinimumSize(windowId, to: CGSize(width: minWidth, height: minHeight))
+        eprint("mur: window \(windowId) has a minimum size of \(Int(minWidth))x\(Int(minHeight))")
         try? await layoutWorkspaces()
     }
 }
