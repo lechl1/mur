@@ -355,9 +355,10 @@ private func runCoordinatedRestore() async {
         // and the window lands wherever the heuristic puts it: the "windows
         // keep changing position after restore" symptom. The cwd is stable
         // across restarts, so for terminals prefer the remembered session's
-        // span. Two terminals in the same cwd resolve to the same cell and
-        // become two ROWS of that column (`place` inserts, never overlaps),
-        // which is what sharing a repo should look like anyway.
+        // span. Each terminal in a cwd claims its OWN saved session (title
+        // match first, then screen order — `claimTerminalSession`): handing
+        // two terminals in one repo the same cell stacked them as rows of
+        // one column on every restart, moving them around.
         var recalled = windowMemory.recall(appId: appId, title: title, shape: shape)
         // Whether `recalled` names THIS window (title / terminal session)
         // or just a cell its app used to have (the pool below).
@@ -371,7 +372,7 @@ private func runCoordinatedRestore() async {
            // whatever workspace happens to be active. Resolving through the
            // spawn record hands them back their remembered workspace + cell.
            let cwd = await resolveTerminalCwd(window),
-           let session = terminalSessionStore.recall(cwd: cwd)
+           let session = claimTerminalSession(cwd: cwd, title: title)
         {
             recalled = StoredWindowState(floating: false, span: session.span, workspace: session.workspace)
         }

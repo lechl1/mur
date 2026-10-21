@@ -17,7 +17,7 @@ import Foundation
 /// resume it). On startup, if `experimental-session-restore` is on, a saved
 /// session whose window is no longer open is relaunched in its cwd.
 
-/// A persisted terminal session, keyed by working directory.
+/// A persisted terminal session: one per terminal window, grouped by cwd.
 struct TerminalSession: Codable, Equatable {
     enum Kind: String, Codable { case shell, claude }
     let cwd: String
@@ -56,8 +56,12 @@ struct TerminalSession: Codable, Equatable {
 
 @MainActor let terminalSessionStore = TerminalSessionStore()
 
+/// Saved sessions, grouped by cwd. A LIST per cwd, not one entry: several
+/// terminals in one repo is normal, and a single slot per cwd made every
+/// one of them restore into the same cell (the last one captured), so on
+/// each restart the columns collapsed into rows of one column.
 final class TerminalSessionStore {
-    private(set) var byCwd: [String: TerminalSession] = [:]
+    private(set) var byCwd: [String: [TerminalSession]] = [:]
     private let url: URL
 
     init(url: URL = TerminalSessionStore.defaultURL()) {
@@ -72,15 +76,20 @@ final class TerminalSessionStore {
             .appendingPathComponent("terminal-sessions.json")
     }
 
-    func recall(cwd: String) -> TerminalSession? { byCwd[cwd] }
-    func remember(_ session: TerminalSession) { byCwd[session.cwd] = session }
+    /// Every session saved for `cwd`, in screen order (workspace, column, row).
+    func sessions(cwd: String) -> [TerminalSession] { byCwd[cwd] ?? [] }
+    /// Replace everything saved for `cwd` with the terminals open there now.
+    func replace(cwd: String, with sessions: [TerminalSession]) {
+        byCwd[cwd] = sessions.sorted { ($0.workspace, $0.lane0, $0.slot0) < ($1.workspace, $1.lane0, $1.slot0) }
+    }
     func forget(cwd: String) { byCwd.removeValue(forKey: cwd) }
-    var all: [TerminalSession] { Array(byCwd.values) }
+    var all: [TerminalSession] { byCwd.values.flatMap(\.self) }
 
     func load() {
         guard let data = try? Data(contentsOf: url),
               let arr = try? JSONDecoder().decode([TerminalSession].self, from: data) else { return }
-        byCwd = Dictionary(arr.map { ($0.cwd, $0) }, uniquingKeysWith: { _, b in b })
+        byCwd = [:]
+        for (cwd, group) in Dictionary(grouping: arr, by: \.cwd) { replace(cwd: cwd, with: group) }
     }
 
     func save() {
@@ -88,6 +97,32 @@ final class TerminalSessionStore {
         guard let data = try? JSONEncoder().encode(all) else { return }
         try? data.write(to: url, options: .atomic)
     }
+}
+
+/// mur — saved sessions already handed to a window during this run's
+/// restore, so two terminals in one cwd get one saved cell each instead of
+/// both getting the first.
+@MainActor private var claimedTerminalSessions: [TerminalSession] = []
+
+/// Hand `window` (a terminal in `cwd`) its saved session: the one whose
+/// title matches, else the next one in screen order nobody claimed yet.
+@MainActor
+func claimTerminalSession(cwd: String, title: String) -> TerminalSession? {
+    guard let pick = pickTerminalSession(
+        from: terminalSessionStore.sessions(cwd: cwd), claimed: claimedTerminalSessions, title: title,
+    ) else { return nil }
+    claimedTerminalSessions.append(pick)
+    return pick
+}
+
+/// The choice behind `claimTerminalSession`. The TITLE is what tells the
+/// terminals in one cwd apart (a claude window is titled with its
+/// conversation), so an unclaimed session with the same normalised title
+/// wins; screen order is only the fallback when no title matches.
+func pickTerminalSession(from saved: [TerminalSession], claimed: [TerminalSession], title: String) -> TerminalSession? {
+    let free = saved.filter { !claimed.contains($0) }
+    let normalized = normalizedSessionTitle(title)
+    return free.first { normalized != nil && $0.title == normalized } ?? free.first
 }
 
 /// Bundle ids treated as terminals for session restore. Ghostty is the
@@ -112,6 +147,7 @@ final class TerminalSessionStore {
 @MainActor
 func captureAllTerminalSessions() async {
     let claude = await claudeCwds()
+    var open: [String: [TerminalSession]] = [:]
     for workspace in Workspace.all {
         for (windowId, span) in workspace.stackingLayout.placements {
             guard let window = Window.get(byId: windowId) else { continue }
@@ -119,23 +155,30 @@ func captureAllTerminalSessions() async {
             guard let cwd = await resolveTerminalCwd(window) else { continue }
             lastKnownTerminalCwd[windowId] = cwd
             let kind: TerminalSession.Kind = claude.contains(cwd) ? .claude : .shell
+            let saved = terminalSessionStore.sessions(cwd: cwd)
             // Keep the id mur already has if the transcript can't be resolved
             // right now (a claude that just started hasn't written one yet) —
             // dropping it would downgrade the next restore to the picker.
             let sessionId = kind == .claude
-                ? await claudeSessionId(forCwd: cwd) ?? terminalSessionStore.recall(cwd: cwd)?.claudeSessionId
+                ? await claudeSessionId(forCwd: cwd) ?? saved.lazy.compactMap(\.claudeSessionId).first
                 : nil
-            terminalSessionStore.remember(TerminalSession(
+            open[cwd, default: []].append(TerminalSession(
                 cwd: cwd,
                 kind: kind,
                 workspace: workspace.name,
                 span: span,
                 claudeSessionId: sessionId,
+                // The title tells the terminals in one cwd apart, so never
+                // borrow a sibling's: fall back only to what was saved for
+                // this same cell.
                 title: normalizedSessionTitle((try? await window.title) ?? "")
-                    ?? terminalSessionStore.recall(cwd: cwd)?.title,
+                    ?? saved.first(where: { $0.workspace == workspace.name && $0.span == span })?.title,
             ))
         }
     }
+    // Only the cwds that have a terminal open now are rewritten; a cwd whose
+    // windows are all gone keeps its sessions (see the close handling below).
+    for (cwd, sessions) in open { terminalSessionStore.replace(cwd: cwd, with: sessions) }
     terminalSessionStore.save()
 }
 
@@ -205,7 +248,9 @@ func relaunchMissingTerminalSessions() {
         let openTitles = await openTerminalTitles()
         let running = await claudeCwds()
         fputs("mur session-restore: open=\(openCwds.sorted()) titles=\(openTitles.sorted()) claude=\(running.sorted()) saved=\(terminalSessionStore.all.map(\.cwd).sorted())\n", stderr)
-        for session in terminalSessionStore.all
+        // One relaunch per cwd: several saved claude sessions in one repo
+        // would all resolve to the same newest transcript, i.e. duplicates.
+        for session in terminalSessionStore.byCwd.values.compactMap(\.first)
             where !openCwds.contains(session.cwd)
             && !(session.title.map(openTitles.contains) ?? false)
             && !(session.kind == .claude && running.contains(session.cwd))

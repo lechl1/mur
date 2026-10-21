@@ -182,7 +182,15 @@ bug. The three fallbacks all carry a workspace now:
   relaunched runs `claude` directly, so no shell integration runs and
   Ghostty never publishes `AXDocument` for it. Adoption of a spawn record
   is sticky (written into `lastKnownTerminalCwd`) because several callers
-  ask and the record is consumed once;
+  ask and the record is consumed once. The store keeps **one session per
+  terminal window**, grouped by cwd — several terminals in one repo is
+  normal, and a single slot per cwd restored them all into the same cell,
+  stacking them as rows of one column on every restart. Within a cwd the
+  **title** tells them apart (`pickTerminalSession`: same normalised title
+  first, then the next unclaimed one in screen order), and each saved
+  session is claimed at most once per run. Ghostty exposes no settable
+  per-window metadata over AX (`AXIdentifier` is the same on every window);
+  its AppleScript window ids look like pointers and aren't a stable handle;
 - a title miss falls back to the app's remembered cells
   (`recallTiledByApp`), handed out **workspace-major** — ordering by cell
   alone interleaves workspaces, since every workspace has a lane 0;
