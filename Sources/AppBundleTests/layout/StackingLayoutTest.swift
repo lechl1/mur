@@ -483,6 +483,67 @@ struct StackingLayoutTest {
         #expect(abs(layout.laneWeight(lane: 1) - 0.4) < 0.001)
     }
 
+    // MARK: a window back from hide / minimize / fullscreen goes back where it was
+
+    @Test func unparkedRowGoesBackUnderTheWindowAboveIt() {
+        // The reproduced bug: a row under the middle terminal was hidden
+        // (⌘H) and came back under the FOCUSED column instead.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .single(lane: 1, slot: 0))
+        layout.place(3, at: .single(lane: 1, slot: 1))
+        layout.place(4, at: .soleSlot(lane: 2))
+        layout.park(3)
+        #expect(layout.placements[3] == nil)
+        #expect(layout.unpark(3))
+        #expect(layout.placements[3] == .single(lane: 1, slot: 1))
+        #expect(layout.placements[2] == .single(lane: 1, slot: 0))
+        #expect(layout.placements[1] == .soleSlot(lane: 0))
+        #expect(layout.placements[4] == .soleSlot(lane: 2))
+    }
+
+    @Test func unparkedTopRowGoesBackAboveTheWindowBelowIt() {
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        layout.park(1)
+        #expect(layout.unpark(1))
+        #expect(layout.placements[1] == .single(lane: 0, slot: 0))
+        #expect(layout.placements[2] == .single(lane: 0, slot: 1))
+    }
+
+    @Test func unparkedColumnComesBackBetweenItsNeighboursAtItsWidth() {
+        // Three columns filling the screen 0.2 / 0.4 / 0.4. The middle one
+        // leaves (its width goes to the others) and comes back: same column,
+        // same widths as before it left.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.place(3, at: .soleSlot(lane: 2))
+        layout.setLaneAbsoluteWidth(0.2, lane: 0)
+        layout.setLaneAbsoluteWidth(0.4, lane: 1)
+        layout.setLaneAbsoluteWidth(0.4, lane: 2)
+        layout.park(2)
+        #expect(layout.placements[3] == .soleSlot(lane: 1))
+        #expect(layout.unpark(2))
+        #expect(layout.placements[1] == .soleSlot(lane: 0))
+        #expect(layout.placements[2] == .soleSlot(lane: 1))
+        #expect(layout.placements[3] == .soleSlot(lane: 2))
+        #expect(abs(layout.laneWeight(lane: 0) - 0.2) < 0.001)
+        #expect(abs(layout.laneWeight(lane: 1) - 0.4) < 0.001)
+        #expect(abs(layout.laneWeight(lane: 2) - 0.4) < 0.001)
+    }
+
+    @Test func unparkWithNothingLeftToAnchorToDeclines() {
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.park(2)
+        layout.remove(1)
+        #expect(!layout.unpark(2))
+        #expect(!layout.unpark(99)) // never parked
+    }
+
     // MARK: a new column beside a full screen takes an equal share
 
     @Test func newColumnBesideAFullWidthColumnSplitsFiftyFifty() {

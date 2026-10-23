@@ -334,6 +334,92 @@ final class StackingLayout {
         setLaneWeights(weights)
     }
 
+    /// mur — where a window stood before macOS took it out of the grid
+    /// (hidden app, minimize, native fullscreen), recorded as the windows
+    /// AROUND it rather than as indices: the indices are compacted away the
+    /// moment its cell is freed, while its neighbours stay put. Nearest
+    /// first in every list.
+    struct ParkedCell {
+        let above: [WindowId]
+        let below: [WindowId]
+        let left: [[WindowId]]
+        let right: [[WindowId]]
+        let laneWeight: CGFloat
+        /// Total width of the strip while the window was in it.
+        let stripTotal: CGFloat
+    }
+
+    private var parked: [WindowId: ParkedCell] = [:]
+
+    /// Take a window out of the grid, remembering where it was so `unpark`
+    /// can put it back. Without this a window coming back from ⌘H /
+    /// minimize / fullscreen re-registered like a brand-new one and was
+    /// stacked under whichever column had focus — windows moving around
+    /// every time an app was hidden and shown again.
+    func park(_ windowId: WindowId) {
+        guard let span = placements[windowId] else { return }
+        let mates = windows(in: span.lane0).filter { $0 != windowId }
+        let used = usedLanes
+        parked[windowId] = ParkedCell(
+            above: mates.filter { (placements[$0]?.slot0 ?? 0) < span.slot0 }.reversed(),
+            below: mates.filter { (placements[$0]?.slot0 ?? 0) > span.slot0 },
+            left: used.filter { $0 < span.lane0 }.reversed().map { windows(in: $0) },
+            right: used.filter { $0 > span.lane1 }.map { windows(in: $0) },
+            laneWeight: laneWeight(lane: span.lane0),
+            stripTotal: used.reduce(0.0) { $0 + laneWeight(lane: $1) },
+        )
+        remove(windowId)
+    }
+
+    func forgetParked(_ windowId: WindowId) {
+        parked.removeValue(forKey: windowId)
+    }
+
+    /// Put a parked window back beside the windows it was parked next to:
+    /// in its old column under the nearest window that was above it (or
+    /// over the nearest one that was below), else in a column of its own
+    /// right of the nearest column that was on its left (or left of the
+    /// nearest one on its right). Its own column gets its old width back,
+    /// and the others go back to the total they had — the close handed its
+    /// width to them, this hands it back. `false` when none of those
+    /// windows is still here: the caller places it like a new window.
+    func unpark(_ windowId: WindowId) -> Bool {
+        guard let cell = parked.removeValue(forKey: windowId), placements[windowId] == nil else { return false }
+        func firstPlaced(_ ids: [WindowId]) -> TileSpan? { ids.lazy.compactMap { self.placements[$0] }.first }
+        if let a = firstPlaced(cell.above) {
+            place(windowId, at: .single(lane: a.lane0, slot: a.slot1 + 1))
+            return true
+        }
+        if let b = firstPlaced(cell.below) {
+            place(windowId, at: .single(lane: b.lane0, slot: b.slot0))
+            return true
+        }
+        let lane: Int
+        if let l = cell.left.lazy.compactMap(firstPlaced).first {
+            lane = l.lane1 + 1
+        } else if let r = cell.right.lazy.compactMap(firstPlaced).first {
+            lane = r.lane0
+        } else {
+            return false
+        }
+        if lane >= shape.lanes {
+            _ = appendLane()
+        } else if usedLanes.contains(lane) {
+            insertLane(at: lane)
+        }
+        let others = usedLanes
+        place(windowId, at: .soleSlot(lane: lane))
+        var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
+        let othersTotal = others.reduce(0.0) { $0 + weights[$1] }
+        let othersTarget = cell.stripTotal - cell.laneWeight
+        if othersTotal > 0, othersTarget > 0 {
+            for l in others { weights[l] *= othersTarget / othersTotal }
+        }
+        weights[lane] = cell.laneWeight
+        setLaneWeights(weights)
+        return true
+    }
+
     /// Squeeze out empty cells: shift used lanes leftward so they're
     /// contiguous from index 0, and renumber slots within each lane to
     /// be contiguous from 0. `shape.lanes` stays put — trailing empties

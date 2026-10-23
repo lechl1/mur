@@ -85,6 +85,14 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   — mur gives up after `autoUnminimizeGiveUpAfter` (2s) if the app insists.
   An explicit `macos-native-minimize` opts out (it records the window in
   `intentionallyMinimizedWindowIds`) and frees the cell instead.
+- **A window that leaves and comes back returns to its spot.** Hiding an
+  app (⌘H), minimizing, or native fullscreen frees the window's cell; it
+  used to come back through the new-window heuristic and land under
+  whichever column had focus. `StackingLayout.park` now records the windows
+  around it (above / below in its column, the columns left / right) — not
+  indices, which compaction rewrites — and `unpark` puts it back beside
+  them, a lone column at its old width with the others scaled back to the
+  total they had.
 - **One window per cell; a window never starts floating.** Two windows may
   never share a `(lane, slot)` — they'd resolve to identical rects and render
   as one window swallowing the other. `StackingLayout.place` enforces this by

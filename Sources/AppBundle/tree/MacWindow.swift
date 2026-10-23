@@ -97,6 +97,7 @@ final class MacWindow: Window {
         }
         forgetMinimizeState(of: windowId)
         forgetOpenedLater(windowId)
+        forgetParkedCell(windowId)
         forgetTerminalSessionOnWindowClose(windowId)
         if !skipClosedWindowsCache { cacheClosedWindowIfNeeded() }
         let parent = unbindFromParent().parent

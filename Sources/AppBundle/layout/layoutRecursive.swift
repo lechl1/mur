@@ -39,8 +39,10 @@ extension Workspace {
                 _ = stackingLayout.remove(windowId)
                 continue
             }
-            if window.nodeWorkspace !== self || window.layoutReason != .standard {
+            if window.nodeWorkspace !== self {
                 _ = stackingLayout.remove(windowId)
+            } else if window.layoutReason != .standard {
+                stackingLayout.park(windowId)
             }
         }
     }

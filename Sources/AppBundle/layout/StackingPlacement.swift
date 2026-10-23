@@ -150,6 +150,13 @@ func forgetOpenedLater(_ windowId: WindowId) {
     openedLaterIds.remove(windowId)
 }
 
+/// Drop a window's parked cell on every workspace: it died, or it came back
+/// (possibly on another workspace, where the old anchors mean nothing).
+@MainActor
+func forgetParkedCell(_ windowId: WindowId) {
+    for workspace in Workspace.all { workspace.stackingLayout.forgetParked(windowId) }
+}
+
 /// Make a window that was just moved to `workspace` visible there. A tiled
 /// window gets a cell in the grid; if the placement declines it (an app known
 /// to be non-resizable, a dialog-like app) it is floated and centred instead,
@@ -218,6 +225,12 @@ private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
         return
     }
     let shape = workspace.stackingLayout.shape
+
+    // mur — a window back from ⌘H / minimize / fullscreen goes back where it
+    // was, not where a new window would go.
+    let unparked = workspace.stackingLayout.unpark(window.windowId)
+    forgetParkedCell(window.windowId)
+    if unparked { return }
 
     // mur — recognized terminals open in their OWN column at a fixed
     // width fraction (1/3, or 1/5 on ultrawide), independent of the

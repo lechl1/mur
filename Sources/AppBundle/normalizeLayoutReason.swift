@@ -113,19 +113,18 @@ func exitMacOsNativeUnconventionalState(window: Window, prevParentKind: NonLeafT
 /// `StackingLayout`, leaving a visible gap with no window in it. Drop it
 /// from the grid so `compactGaps()` collapses the freed cell. It rejoins
 /// the grid via `tryRegisterInStackingLayout` when it returns to standard
-/// layout. No-op when the grid is off or the window wasn't in it.
+/// layout — at the cell it was parked from (`StackingLayout.park`). No-op
+/// when the grid is off or the window wasn't in it.
 @MainActor
 private func dropFromStackingLayout(_ window: Window, in workspace: Workspace) {
     guard config.experimentalStackingLayout else { return }
-    _ = workspace.stackingLayout.remove(window.windowId)
+    workspace.stackingLayout.park(window.windowId)
     // The minimized-windows container is global, so the workspace passed in
     // isn't necessarily the one holding the window's cell (see the
     // `focus.workspace` call site in `normalizeLayoutReason`). Sweep the
     // rest so a stale cell can't keep a column alive on another workspace.
     for other in Workspace.all where other != workspace {
-        if other.stackingLayout.placements[window.windowId] != nil {
-            _ = other.stackingLayout.remove(window.windowId)
-        }
+        other.stackingLayout.park(window.windowId)
     }
 }
 
