@@ -263,6 +263,16 @@ private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
         return
     }
 
+    // mur — a window of an app that had a window here before (the app
+    // restarted) goes back to that window's spot in the saved arrangement,
+    // beside the same neighbours — not under whichever column has focus.
+    if let cell = arrangementStore.takeGhostCell(
+        appId: appId, workspace: workspace.name, windowId: window.windowId,
+        isPlaced: { workspace.stackingLayout.placements[$0] != nil },
+    ), workspace.stackingLayout.placeBeside(window.windowId, cell) {
+        return
+    }
+
     // Place heuristically for now (sync, no title). The PRECISE per-title
     // cell is restored asynchronously by
     // `restoreWindowStateOnRegister(_:)`, which can await the window title
@@ -340,7 +350,8 @@ private func runCoordinatedRestore() async {
     // claimed (nothing left to steer).
     if restoreModeDeadline == nil {
         restoreModeDeadline = Date.now.addingTimeInterval(restoreSettle)
-        unclaimedRestoreEntries = windowMemory.tiledEntryCount()
+        unclaimedRestoreEntries = arrangementStore.entryCount > 0
+            ? arrangementStore.entryCount : windowMemory.tiledEntryCount()
     }
     let isStartupRestore = unclaimedRestoreEntries > 0
         && Date.now < (restoreModeDeadline ?? .distantPast)
@@ -385,11 +396,23 @@ private func runCoordinatedRestore() async {
         // match first, then screen order — `claimTerminalSession`): handing
         // two terminals in one repo the same cell stacked them as rows of
         // one column on every restart, moving them around.
-        var recalled = windowMemory.recall(appId: appId, title: title, shape: shape)
+        // The saved arrangement (relative positions) comes first: its column
+        // and row are ranks, which is exactly what the rebuild below wants.
+        // The absolute-index memories are only the fallback for a window it
+        // has never seen.
+        var recalled: StoredWindowState?
         // Whether `recalled` names THIS window (title / terminal session)
         // or just a cell its app used to have (the pool below).
         var isAppPoolGuess = false
-        if sessionRestoreTerminalBundleIds.contains(appId),
+        if let spot = arrangementStore.claim(await arrangedWindow(window)) {
+            recalled = StoredWindowState(
+                floating: false,
+                span: .single(lane: spot.path.column, slot: spot.path.row),
+                workspace: spot.workspace,
+            )
+            isAppPoolGuess = spot.isAppGuess
+        }
+        if recalled == nil, sessionRestoreTerminalBundleIds.contains(appId),
            // `resolveTerminalCwd`, not `window.cwd`: a session mur itself
            // relaunched runs `claude` directly, so no shell integration runs
            // and Ghostty NEVER publishes AXDocument for it. Asking the window
@@ -402,6 +425,7 @@ private func runCoordinatedRestore() async {
         {
             recalled = StoredWindowState(floating: false, span: session.span, workspace: session.workspace)
         }
+        if recalled == nil { recalled = windowMemory.recall(appId: appId, title: title, shape: shape) }
         // Title miss and no terminal session: fall back to this app's
         // remembered cells, handed out in order so N windows of one app
         // keep their relative columns instead of scattering.
@@ -658,5 +682,6 @@ func persistWindowStateNow() async {
         }
     }
     windowMemory.save()
+    await captureArrangement()
     await captureAllTerminalSessions()
 }

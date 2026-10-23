@@ -180,6 +180,21 @@ woke mur up.
 
 ## Restore is workspace-aware
 
+**Positions are saved as relative arrangements, not indices**
+(`Arrangement.swift`, `~/.config/mur/arrangement.json`): per workspace, an
+array of columns, each an array of window identities (app + normalised
+title, plus cwd for terminals). Lane/slot numbers are rewritten by every
+compaction, so a window remembered as "lane 4" came back wherever lane 4
+happened to be. A closed window stays in the array as a **ghost**:
+`Arrangement.merge` keeps the live screen as the truth and re-inserts each
+ghost beside its old neighbours. A window of that app opening later (an
+app restart) takes the ghost's spot synchronously at registration
+(`takeGhostCell` → `StackingLayout.placeBeside`), and the startup restore
+`claim`s entries by identity, then terminal cwd, then app. A renamed window
+(browser tab) claims its app's ghost, so ghosts don't pile up. The old
+`WindowMemory` / terminal-session spans are only the fallback for a window
+the arrangement has never seen.
+
 macOS has no workspaces to read back, so at startup **every** window is
 registered into whichever workspace happens to be active. The workspace a
 window belongs to therefore only exists in mur's own memory

@@ -345,8 +345,10 @@ final class StackingLayout {
         let left: [[WindowId]]
         let right: [[WindowId]]
         let laneWeight: CGFloat
-        /// Total width of the strip while the window was in it.
-        let stripTotal: CGFloat
+        /// Total width of the strip while the window was in it. `nil` for a
+        /// window OPENING into a remembered spot: the others then shrink to
+        /// make room only if they already fill the screen.
+        let stripTotal: CGFloat?
     }
 
     private var parked: [WindowId: ParkedCell] = [:]
@@ -384,7 +386,13 @@ final class StackingLayout {
     /// width to them, this hands it back. `false` when none of those
     /// windows is still here: the caller places it like a new window.
     func unpark(_ windowId: WindowId) -> Bool {
-        guard let cell = parked.removeValue(forKey: windowId), placements[windowId] == nil else { return false }
+        guard let cell = parked.removeValue(forKey: windowId) else { return false }
+        return placeBeside(windowId, cell)
+    }
+
+    /// Place `windowId` at the spot `cell` describes — see `unpark`.
+    func placeBeside(_ windowId: WindowId, _ cell: ParkedCell) -> Bool {
+        guard placements[windowId] == nil else { return false }
         func firstPlaced(_ ids: [WindowId]) -> TileSpan? { ids.lazy.compactMap { self.placements[$0] }.first }
         if let a = firstPlaced(cell.above) {
             place(windowId, at: .single(lane: a.lane0, slot: a.slot1 + 1))
@@ -411,7 +419,8 @@ final class StackingLayout {
         place(windowId, at: .soleSlot(lane: lane))
         var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
         let othersTotal = others.reduce(0.0) { $0 + weights[$1] }
-        let othersTarget = cell.stripTotal - cell.laneWeight
+        let othersTarget = cell.stripTotal.map { $0 - cell.laneWeight }
+            ?? (othersTotal >= 1 - 1e-6 ? 1 - cell.laneWeight : othersTotal)
         if othersTotal > 0, othersTarget > 0 {
             for l in others { weights[l] *= othersTarget / othersTotal }
         }
