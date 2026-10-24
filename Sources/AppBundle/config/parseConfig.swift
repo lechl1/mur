@@ -128,6 +128,7 @@ private let configParser: [String: any ParserProtocol<Config>] = [
     // mur — phase 1 feature flag (see docs/MUR_DESIGN.md)
     "experimental-stacking-layout": Parser(\.experimentalStackingLayout, parseBool),
     "experimental-session-restore": Parser(\.experimentalSessionRestore, parseBool),
+    "enable-window-animations": Parser(\.enableWindowAnimations, parseBool),
 
     // Deprecated
     "non-empty-workspaces-root-containers-layout-on-startup": Parser(\._nonEmptyWorkspacesRootContainersLayoutOnStartup, parseStartupRootContainerLayout),

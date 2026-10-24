@@ -67,6 +67,11 @@ struct Config: ConvenienceCopyable {
     /// false to fall back to AeroSpace's tree-based (i3-style) layout.
     var experimentalStackingLayout: Bool = true
 
+    /// mur — when true (the default), windows glide to their cells with
+    /// `WindowAnimator`'s spring. Set to false for instant placement, when the
+    /// AX-driven animation lags on a given setup.
+    var enableWindowAnimations: Bool = true
+
     /// mur — when true (the mur default), on startup mur RELAUNCHES terminal
     /// sessions (Ghostty) whose window is no longer open, in their saved
     /// working directory, resuming `claude` for sessions that were running

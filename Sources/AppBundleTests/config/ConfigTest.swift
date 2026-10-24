@@ -19,6 +19,13 @@ final class ConfigTest: XCTestCase {
         assertEquals(errors, [])
     }
 
+    func testWindowAnimationsAreOnUnlessTurnedOff() {
+        assertEquals(defaultConfig.enableWindowAnimations, true)
+        let (off, errors) = parseConfig("enable-window-animations = false")
+        assertEquals(errors, [])
+        assertEquals(off.enableWindowAnimations, false)
+    }
+
     func testConfigVersionOutOfBounds() {
         let (_, errors) = parseConfig(
             """

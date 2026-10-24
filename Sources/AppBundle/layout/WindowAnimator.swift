@@ -32,9 +32,9 @@ import QuartzCore
 final class WindowAnimator {
     static let shared = WindowAnimator()
 
-    /// Master switch. Flip to `false` to fall back to instant placement if
-    /// the AX-driven animation feels janky on a given setup.
-    static let enabled = true
+    /// Master switch: `enable-window-animations` in the config. Off, every
+    /// window is placed at once.
+    static var enabled: Bool { config.enableWindowAnimations }
 
     /// Critically-damped spring, mass 1. `β = √stiffness = damping/2` for
     /// ζ = 1. Settle time scales as 1/√stiffness, so 1800 (≈2.25× the base

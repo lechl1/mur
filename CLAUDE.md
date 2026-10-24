@@ -125,7 +125,9 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   instant `setAxFrame`. The animator drives per-frame `setAxFrame`s on a 60 fps
   timer and lists driven windows in `animatingIds`; the AX move/resize
   observers ignore notifications for those ids so the animation can't cause a
-  refresh storm. Master switch: `WindowAnimator.enabled`.
+  refresh storm. Master switch: the `enable-window-animations` config key
+  (default true; `WindowAnimator.enabled` reads it), for setups where the
+  AX-driven animation lags.
 
 Implementation lives in `Sources/AppBundle/layout/StackingLayout.swift`
 (`LayoutOrientation`, `LayoutShape`, `TileSpan`, `StackingLayout`), driven by
