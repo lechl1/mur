@@ -1,0 +1,46 @@
+= aerospace-open-layout(1)
+include::util/man-attributes.adoc[]
+// tag::purpose[]
+:manpurpose: Open a saved layout template on the next free workspace
+// end::purpose[]
+:manname: aerospace-open-layout
+
+// =========================================================== Synopsis
+== Synopsis
+[verse]
+// tag::synopsis[]
+aerospace open-layout [-h|--help] [--workspace <workspace>] <name> [<dir>]
+
+// end::synopsis[]
+
+// =========================================================== Description
+== Description
+
+// tag::body[]
+{manpurpose}
+and launch every app of it in a directory.
+
+The first empty workspace (in `persistent-workspaces` order) is focused,
+each window's `launch` command runs in `<dir>` with `$MUR_DIR` set to it,
+and every new window is put in its column and row at the saved sizes.
+Windows of one app are launched one at a time, so each can be matched to
+its cell. A window that hasn't appeared after 90 seconds is given up on.
+
+See `save-layout` for the template format.
+
+// =========================================================== Options
+include::./util/conditional-options-header.adoc[]
+
+-h, --help:: Print help
+--workspace <workspace>:: Use this workspace instead of the next free one.
+
+// =========================================================== Arguments
+include::./util/conditional-arguments-header.adoc[]
+
+<name>:: The template name (`~/.config/mur/layouts/<name>.toml`), or a path to a `.toml` file.
+<dir>:: The directory to start the apps in. Defaults to the current directory.
+
+// end::body[]
+
+// =========================================================== Footer
+include::util/man-footer.adoc[]

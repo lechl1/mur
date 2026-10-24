@@ -241,6 +241,42 @@ relaunches takes seconds to map, a browser reopening tabs longer. So
 restore mode stays on for `restoreSettle` (60s) and ends early once every
 remembered window has been claimed (`unclaimedRestoreEntries`).
 
+## Layout templates (`save-layout` / `open-layout`)
+
+`mur save-layout <name>` writes a workspace as a template,
+`~/.config/mur/layouts/<name>.toml` (`LayoutTemplate.swift`): columns with
+their widths, rows with their share of the column, and per cell an app
+bundle id plus a `launch` shell command that opens ONE new window of it.
+`mur open-layout <name> [dir]` (`LayoutLaunch.swift`) takes the next empty
+workspace, runs each `launch` in `dir` (also `$MUR_DIR`; the CLI sends its
+cwd as `--cwd` because the server's is its own), and gives each new window
+its cell. A template names no window, unlike `Arrangement`: it's what to
+launch and where to put what appears. Paths under the base directory
+are saved as `$MUR_DIR`.
+
+- **A window is matched by bundle id at registration** (`claimTemplateCell`
+  in `tryRegisterInStackingLayout`). Nothing else identifies it yet, so the
+  windows of ONE app launch one at a time, each after the previous one
+  appeared (or after 90s); different apps launch in parallel. Placed
+  windows skip the coordinated restore (`templatePlacedIds`).
+- **Placement is by rank**, not index (`placeFromTemplate`): arrival order
+  is arbitrary and every `place()` compacts, so a window joins the lane
+  holding its column below the rows above it, or opens a lane after the
+  columns to its left. Sizes are reapplied after each one.
+- **Launch guesses, each verified live:**
+  - Ghostty: `--input='<cmd>'$'\n'`, which types the command into the
+    user's own shell. Not `-e`: that opens a second surface as a tab beside
+    the command's, and a command run in place of the shell has no shell
+    integration (so mur can't read its cwd) and closes the window when it
+    exits.
+  - JetBrains IDEs and editors: `open -b <id> "$MUR_DIR"`. `open -n … --args
+    <dir>` makes RustRover do nothing at all.
+  - Chromium browsers: `--new-window <url>`, with the URL read over
+    AppleScript. In a `tell` block, `tab` means the browser's tab class,
+    not the tab character, so use `character id 9`. The AppleScript call needs
+    `NSAppleEventsUsageDescription` in Info.plist: without it macOS refuses
+    without asking.
+
 ## Restoring a claude session
 
 A restored terminal is relaunched with `claude --resume <session-id>`, not

@@ -39,8 +39,10 @@ public enum CmdKind: String, CaseIterable, Equatable, Sendable {
     case moveNodeToMonitor = "move-node-to-monitor"
     case moveNodeToWorkspace = "move-node-to-workspace"
     case moveWorkspaceToMonitor = "move-workspace-to-monitor"
+    case openLayout = "open-layout"         // mur — rebuild a saved layout template
     case reloadConfig = "reload-config"
     case resize
+    case saveLayout = "save-layout"         // mur — capture a workspace as a layout template
     case split
     case subscribe
     case summonWorkspace = "summon-workspace"
@@ -136,8 +138,12 @@ func initSubcommands() -> [String: any SubCommandParserProtocol] {
                 result[kind.rawValue] = SubCommandParser(parseWorkspaceToMonitorCmdArgs)
                 // deprecated
                 result["move-workspace-to-display"] = SubCommandParser(MoveWorkspaceToMonitorCmdArgs.init)
+            case .openLayout:
+                result[kind.rawValue] = SubCommandParser(OpenLayoutCmdArgs.init)
             case .reloadConfig:
                 result[kind.rawValue] = SubCommandParser(ReloadConfigCmdArgs.init)
+            case .saveLayout:
+                result[kind.rawValue] = SubCommandParser(SaveLayoutCmdArgs.init)
             case .resize:
                 result[kind.rawValue] = SubCommandParser(parseResizeCmdArgs)
             case .split:

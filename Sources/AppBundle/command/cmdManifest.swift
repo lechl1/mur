@@ -80,8 +80,12 @@ extension CmdArgs {
                 command = MoveNodeToWorkspaceCommand(args: self as! MoveNodeToWorkspaceCmdArgs)
             case .moveWorkspaceToMonitor:
                 command = MoveWorkspaceToMonitorCommand(args: self as! MoveWorkspaceToMonitorCmdArgs)
+            case .openLayout:
+                command = OpenLayoutCommand(args: self as! OpenLayoutCmdArgs)
             case .reloadConfig:
                 command = ReloadConfigCommand(args: self as! ReloadConfigCmdArgs)
+            case .saveLayout:
+                command = SaveLayoutCommand(args: self as! SaveLayoutCmdArgs)
             case .resize:
                 command = ResizeCommand(args: self as! ResizeCmdArgs)
             case .split:

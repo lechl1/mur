@@ -106,7 +106,13 @@ struct Main {
             exit(EXIT_CODE_ZERO) // Should not reach here
         }
 
-        let ans = await run(connection, args, stdin: stdin, windowId: windowId, workspace: workspace, failExitCode: failExitCode)
+        // mur — layout templates resolve paths against the CLI's directory
+        // (open-layout starts its apps there); the server's cwd is its own.
+        var requestArgs = args
+        if parsedArgs is OpenLayoutCmdArgs || parsedArgs is SaveLayoutCmdArgs, !args.contains("--cwd") {
+            requestArgs = (args.toArray() + ["--cwd", FileManager.default.currentDirectoryPath]).slice(0...) ?? args
+        }
+        let ans = await run(connection, requestArgs, stdin: stdin, windowId: windowId, workspace: workspace, failExitCode: failExitCode)
 
         if !ans.stdout.isEmpty { print(ans.stdout) }
         if !ans.stderr.isEmpty { eprint(ans.stderr) }

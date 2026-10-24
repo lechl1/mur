@@ -192,3 +192,9 @@ let workspace_help_generated = """
     USAGE: workspace [-h|--help] [--auto-back-and-forth] [--fail-if-noop] <workspace-name>
        OR: workspace [-h|--help] [--wrap-around] [--stdin|--no-stdin] (next|prev)
     """
+let open_layout_help_generated = """
+    USAGE: open-layout [-h|--help] [--workspace <workspace>] <name> [<dir>]
+    """
+let save_layout_help_generated = """
+    USAGE: save-layout [-h|--help] [--workspace <workspace>] [--dir <dir>] <name>
+    """

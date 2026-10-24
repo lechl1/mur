@@ -124,8 +124,12 @@ func tryRegisterInStackingLayout(_ window: Window) {
     // a remembered cell. That hop is avoided at the source instead: outside
     // restore mode a window opened while mur is running keeps this cell
     // (see `openedLaterIds` in `runCoordinatedRestore`).
-    mountInStackingLayout(window, in: workspace)
-    tileInTreeIfInGrid(window, in: workspace)
+    // mur — a window `open-layout` launched goes to its template cell, on
+    // the template's workspace, instead of through the heuristics.
+    if !claimTemplateCell(window) {
+        mountInStackingLayout(window, in: workspace)
+    }
+    if let workspace = window.nodeWorkspace { tileInTreeIfInGrid(window, in: workspace) }
 }
 
 /// mur — a window the grid placed must be TILED in the tree too. The
@@ -313,6 +317,8 @@ private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
 @MainActor
 func restoreWindowStateOnRegister(_ window: Window) {
     guard config.experimentalStackingLayout else { return }
+    // Placed from a layout template: that cell is the one the user asked for.
+    if templatePlacedIds.remove(window.windowId) != nil { return }
     pendingRestoreIds.insert(window.windowId)
     if !isStartup { openedLaterIds.insert(window.windowId) }
     coordinatedRestoreTask?.cancel()

@@ -35,6 +35,7 @@ if ! test -f .debug/MurApp.app/Contents/Info.plist; then
     <key>LSUIElement</key>                 <true/>
     <key>NSPrincipalClass</key>            <string>NSApplication</string>
     <key>NSHighResolutionCapable</key>     <true/>
+    <key>NSAppleEventsUsageDescription</key> <string>save-layout asks your browser which page each window shows, so the layout template can reopen it.</string>
 </dict>
 </plist>
 EOF

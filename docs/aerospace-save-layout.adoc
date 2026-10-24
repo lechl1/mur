@@ -1,0 +1,52 @@
+= aerospace-save-layout(1)
+include::util/man-attributes.adoc[]
+// tag::purpose[]
+:manpurpose: Save a workspace's columns, rows and apps as a layout template
+// end::purpose[]
+:manname: aerospace-save-layout
+
+// =========================================================== Synopsis
+== Synopsis
+[verse]
+// tag::synopsis[]
+aerospace save-layout [-h|--help] [--workspace <workspace>] [--dir <dir>] <name>
+
+// end::synopsis[]
+
+// =========================================================== Description
+== Description
+
+// tag::body[]
+{manpurpose}
+that `open-layout` rebuilds on a free workspace, in any directory.
+
+The template is written to `~/.config/mur/layouts/<name>.toml`.
+It records each column's width, each row's share of its column, the app
+of every window, and a `launch` shell command that opens one new window
+of that app. mur guesses the command: a Ghostty terminal reopens in its
+directory running what its title shows (`claude` for a Claude Code
+session, nothing for a shell prompt), a Chromium browser opens a new
+window on the tab it was showing, a JetBrains IDE or an editor opens the
+directory. Anything else gets `open -b <app>`. The file is meant to be
+edited: change any `launch` line.
+
+Paths under `--dir` are written as `$MUR_DIR`, which `open-layout`
+replaces with the directory it is given. Without `--dir`, the directory
+most of the workspace's terminals are in is used.
+
+// =========================================================== Options
+include::./util/conditional-options-header.adoc[]
+
+-h, --help:: Print help
+--workspace <workspace>:: The workspace to save. Defaults to the focused workspace.
+--dir <dir>:: The directory the template's paths are relative to.
+
+// =========================================================== Arguments
+include::./util/conditional-arguments-header.adoc[]
+
+<name>:: The template name, or a path to a `.toml` file.
+
+// end::body[]
+
+// =========================================================== Footer
+include::util/man-footer.adoc[]
