@@ -1,0 +1,4 @@
+# mur runs on a Mac, not in the cluster: slipway only publishes it, as a cask
+# in depot built from resources/Info.plist (slipway/src/detect/swift.rs).
+slipway:
+  publishOnly: true

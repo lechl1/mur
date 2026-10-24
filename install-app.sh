@@ -21,7 +21,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 REPO="$PWD"
 
 APP_NAME="Mur"
-BUNDLE_ID="com.mur.MurApp"
 INSTALL_DIR="${MUR_INSTALL_DIR:-/Applications}"
 DEST="$INSTALL_DIR/$APP_NAME.app"
 
@@ -57,50 +56,21 @@ test -x "$SRC_CLI" && cp "$SRC_CLI" "$DEST/Contents/MacOS/mur"
 
 printf 'APPL????' > "$DEST/Contents/PkgInfo"
 
-# App icon. Built with sips + iconutil rather than `actool` on purpose:
-# actool is an Xcode IDE plugin host and dies with "A required plugin
-# failed to load" on machines that never ran `xcodebuild -runFirstLaunch`,
-# whereas sips/iconutil are plain /usr/bin tools. A missing icon is not
-# fatal — the app just gets the generic one.
-icon_key=""
-icon_src="$REPO/resources/Assets.xcassets/AppIcon.appiconset/icon.png"
-if test -f "$icon_src" && command -v iconutil > /dev/null 2>&1; then
-    iconset="$(mktemp -d -t mur-iconset.XXXXXX)/AppIcon.iconset"
-    mkdir -p "$iconset"
-    ok=1
-    for size in 16 32 128 256 512; do
-        sips -z $size $size          "$icon_src" --out "$iconset/icon_${size}x${size}.png"    > /dev/null 2>&1 || ok=0
-        sips -z $((size*2)) $((size*2)) "$icon_src" --out "$iconset/icon_${size}x${size}@2x.png" > /dev/null 2>&1 || ok=0
-    done
-    if test $ok == 1 && iconutil -c icns "$iconset" -o "$DEST/Contents/Resources/AppIcon.icns" > /dev/null 2>&1; then
-        icon_key='    <key>CFBundleIconFile</key>          <string>AppIcon</string>'
-    fi
-    rm -rf "$(dirname "$iconset")"
-fi
+# The bundle's manifest and icon are checked in (resources/Info.plist,
+# resources/AppIcon.icns): the same files slipway bundles into the cask, so a
+# local install and a published one are the same app. Only the version is
+# filled in here. To change the icon, rebuild AppIcon.icns from
+# Assets.xcassets/AppIcon.appiconset/icon.png with sips + iconutil (not actool,
+# an Xcode IDE plugin host that dies on machines that never ran
+# `xcodebuild -runFirstLaunch`).
+cp "$REPO/resources/AppIcon.icns" "$DEST/Contents/Resources/AppIcon.icns"
 
 version="$(sed -n 's/.*aeroSpaceAppVersion = "\(.*\)".*/\1/p' "$REPO/Sources/Common/versionGenerated.swift")"
 version="${version:-0.0.0-SNAPSHOT}"
 
-cat > "$DEST/Contents/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>          <string>MurApp</string>
-    <key>CFBundleIdentifier</key>          <string>$BUNDLE_ID</string>
-    <key>CFBundleName</key>                <string>$APP_NAME</string>
-    <key>CFBundleDisplayName</key>         <string>$APP_NAME</string>
-    <key>CFBundleShortVersionString</key>  <string>$version</string>
-    <key>CFBundleVersion</key>             <string>$version</string>
-    <key>CFBundlePackageType</key>         <string>APPL</string>
-$icon_key
-    <key>LSMinimumSystemVersion</key>      <string>13.0</string>
-    <key>LSUIElement</key>                 <true/>
-    <key>NSPrincipalClass</key>            <string>NSApplication</string>
-    <key>NSHighResolutionCapable</key>     <true/>
-</dict>
-</plist>
-EOF
+cp "$REPO/resources/Info.plist" "$DEST/Contents/Info.plist"
+plutil -replace CFBundleShortVersionString -string "$version" "$DEST/Contents/Info.plist"
+plutil -replace CFBundleVersion -string "$version" "$DEST/Contents/Info.plist"
 
 # Signature. mur reads other apps' windows through the Accessibility API,
 # and macOS refuses to hand out that permission to an unsigned bundle.

@@ -16,10 +16,10 @@ import Foundation
 /// beside it.
 struct ArrangedWindow: Codable, Hashable {
     let appId: String
-    /// Normalised (`normalizedSessionTitle`), so a terminal's status glyph
-    /// doesn't make it a different window.
     // periphery:ignore - read through the synthesized Hashable/Codable
     // conformance: it is half of what tells two windows of an app apart.
+    /// Normalised (`normalizedSessionTitle`), so a terminal's status glyph
+    /// doesn't make it a different window.
     let title: String
     /// Terminals only: the cwd tells terminals with similar titles apart.
     var cwd: String?
