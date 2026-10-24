@@ -14,6 +14,8 @@ struct MurApp: App {
     @StateObject private var viewModel = TrayMenuModel.shared
     @StateObject private var messageModel = MessageModel.shared
     @Environment(\.openWindow) var openWindow: OpenWindowAction
+    // mur — logout / shutdown / Quit wait for the hidden windows to come back.
+    @NSApplicationDelegateAdaptor(MurAppDelegate.self) private var appDelegate
 
     init() {
         initAppBundle()

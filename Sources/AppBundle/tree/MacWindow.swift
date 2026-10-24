@@ -32,6 +32,8 @@ final class MacWindow: Window {
         if let existing = allWindowsMap[windowId] { return existing }
         let window = MacWindow(windowId, macApp, lastFloatingSize: rect?.size, parent: data.parent, adaptiveWeight: data.adaptiveWeight, index: data.index)
         allWindowsMap[windowId] = window
+        // mur — a window a mur that didn't clean up left parked off screen.
+        if isStartup { reclaimParkedWindow(window, rect: rect) }
 
         try await debugWindowsIfRecording(window)
         if try await !restoreClosedWindowsCacheIfNeeded(newlyDetectedWindow: window) {

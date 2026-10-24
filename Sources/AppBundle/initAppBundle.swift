@@ -9,9 +9,10 @@ import Foundation
         initServerArgs()
         if isDebug {
             await toggleReleaseServerIfDebug(.off)
-            interceptTermination(SIGINT)
-            interceptTermination(SIGKILL)
         }
+        // mur — every build, not just debug ones: a `kill` that skips the
+        // cleanup leaves each hidden window parked in its corner.
+        interceptTerminationSignals([SIGTERM, SIGINT, SIGHUP])
         if try await !reloadConfig() {
             var out = ""
             check(

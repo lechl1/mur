@@ -357,6 +357,32 @@ When mur is untrusted the menu-bar item reads
 (`updateTrayText`), because the old signal was a `print` that nobody sees
 when the app was launched from Finder.
 
+## Hidden windows come back when mur stops (`HiddenWindows.swift`)
+
+mur hides the windows of every workspace that isn't on screen by moving
+them to a monitor's corner, with 1px left showing (`hideInCorner`). Only mur
+knows they're there, so every way it stops has to put them back:
+
+- **Signals** (`interceptTerminationSignals`): SIGTERM, SIGINT and SIGHUP,
+  in every build. These are `pkill`, `brew upgrade` and ^C. A dispatch
+  source on the main queue handles them, not a C signal handler, because the
+  cleanup is async main-actor work. This used to cover only SIGINT and
+  "SIGKILL" (which can't be caught), and only in debug builds, so a plain
+  `kill` left every hidden window in its corner.
+- **macOS quitting it** (logout, restart, shutdown, Quit):
+  `MurAppDelegate.applicationShouldTerminate` answers `.terminateLater`
+  until the windows are back.
+- **What nothing can catch** (a crash, SIGKILL): at startup,
+  `reclaimParkedWindow` moves any window found almost entirely off screen
+  back into view. If its workspace isn't the visible one, the layout hides
+  it again, this time remembering an on-screen spot.
+
+`bringParkedWindowsBack` moves only the windows that are off screen, at
+their own size. Windows already showing stay put. It is bounded per window,
+in parallel, so one wedged app can't hold up the quit. (AeroSpace's version
+moved *every* window to the screen centre at its last floating size, and
+the first failing AX call aborted the loop.)
+
 ## Restarting the daemon after a debug build
 
 After `bash build-debug.sh`, restart the running daemon by killing it and

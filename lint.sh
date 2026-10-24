@@ -4,6 +4,14 @@ source ./script/setup.sh
 
 ./format.sh "$@"
 
+# The same SwiftLint the pipeline runs (slipway's Swift builder); without it
+# here, a violation is only found after the push.
+if command -v swiftlint > /dev/null; then
+    swiftlint lint --strict --quiet
+else
+    echo 'warning: swiftlint is not installed (brew install swiftlint): skipping it here, the pipeline still runs it'
+fi
+
 if sw_vers -productVersion | grep -q "^14"; then # macOS 14
     # dyld[6263]: Library not loaded: /usr/lib/swift/libswiftSynchronization.dylib
     # Referenced from: <0A48220F-3DCA-3C6C-A54C-FE6C3B854E23> /Users/runner/work/AeroSpace/AeroSpace/.deps/periphery/dist/periphery-3.6.0.artifactbundle/periphery-3.6.0-macos/bin/periphery (built for macOS 15.0 which is newer than running OS)

@@ -12,42 +12,21 @@ nonisolated(unsafe) let signposter = OSSignposter(subsystem: aeroSpaceAppId, cat
 let myPid = NSRunningApplication.current.processIdentifier
 let lockScreenAppBundleId = "com.apple.loginwindow"
 
-func interceptTermination(_ _signal: Int32) {
-    signal(_signal, { signal in
-        check(Thread.current.isMainThread)
-        fireAndForget {
-            defer { exit(signal) }
-            try await terminationHandler.beforeTermination()
-        }
-    } as sig_t)
-}
-
 @MainActor
 func initTerminationHandler() {
     unsafe _terminationHandler = AppServerTerminationHandler()
 }
 
+/// Set once the cleanup ran: a Quit runs it, then asks AppKit to terminate,
+/// which asks the delegate, which would run it again.
+@MainActor private var terminationCleanupDone = false
+
 private struct AppServerTerminationHandler: TerminationHandler {
     func beforeTermination() async throws {
-        try await makeAllWindowsVisibleAndRestoreSize()
+        if await MainActor.run(body: { terminationCleanupDone }) { return }
+        await bringParkedWindowsBack()
+        await MainActor.run { terminationCleanupDone = true }
         await toggleReleaseServerIfDebug(.on)
-    }
-}
-
-@MainActor
-private func makeAllWindowsVisibleAndRestoreSize() async throws {
-    // Make all windows fullscreen before Quit
-    for (_, window) in MacWindow.allWindowsMap {
-        // makeAllWindowsVisibleAndRestoreSize may be invoked when something went wrong (e.g. some windows are unbound)
-        // that's why it's not allowed to use `.parent` call in here
-        let monitor = try await window.getCenter()?.monitorApproximation ?? mainMonitor
-        let monitorVisibleRect = monitor.visibleRect
-        let windowSize = window.lastFloatingSize ?? CGSize(width: monitorVisibleRect.width, height: monitorVisibleRect.height)
-        let point = CGPoint(
-            x: (monitorVisibleRect.width - windowSize.width) / 2,
-            y: (monitorVisibleRect.height - windowSize.height) / 2,
-        )
-        try await window.setAxFrameBlocking(point, windowSize)
     }
 }
 
