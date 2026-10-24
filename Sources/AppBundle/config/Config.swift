@@ -19,11 +19,28 @@ var defaultConfigUrl: URL {
     } else {
         return Bundle.main.url(forResource: "default-config", withExtension: "toml")
             // Useful for debug builds that are not app bundles
-            ?? getDefaultConfigUrlFromProject()
+            ?? (FileManager.default.fileExists(atPath: #filePath) ? getDefaultConfigUrlFromProject() : nil)
+            // mur — a bundle without the file and away from its source tree
+            // (slipway's cask): the compiled-in copy, written out once.
+            ?? materializedDefaultConfigUrl()
     }
 }
+
+/// `defaultConfigToml` as a file, for the callers that need one (copying it
+/// to a new config, opening it in an editor). Rewritten when it differs, so
+/// an update's new defaults show.
+private func materializedDefaultConfigUrl() -> URL {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/mur/default-config.toml")
+    if (try? String(contentsOf: url, encoding: .utf8)) != defaultConfigToml {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? defaultConfigToml.write(to: url, atomically: true, encoding: .utf8)
+    }
+    return url
+}
+
 @MainActor let defaultConfig: Config = {
-    let parsedConfig = parseConfig(Result { try String(contentsOf: defaultConfigUrl, encoding: .utf8) }.getOrDie())
+    let parsedConfig = parseConfig(defaultConfigToml)
     if !parsedConfig.errors.isEmpty {
         die("Can't parse default config: \(parsedConfig.errors)")
     }

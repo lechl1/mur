@@ -19,6 +19,12 @@ final class ConfigTest: XCTestCase {
         assertEquals(errors, [])
     }
 
+    /// The compiled-in copy (generate.sh) is the checked-in file, byte for byte.
+    func testCompiledInDefaultConfigIsTheDocsFile() throws {
+        let toml = try String(contentsOf: projectRoot.appending(component: "docs/config-examples/default-config.toml"), encoding: .utf8)
+        assertEquals(defaultConfigToml + "\n", toml)
+    }
+
     func testWindowAnimationsAreOnUnlessTurnedOff() {
         assertEquals(defaultConfig.enableWindowAnimations, true)
         let (off, errors) = parseConfig("enable-window-animations = false")
