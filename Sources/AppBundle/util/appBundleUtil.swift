@@ -30,10 +30,20 @@ private struct AppServerTerminationHandler: TerminationHandler {
     }
 }
 
+/// mur — asks AppKit to quit from a run-loop block, not from the caller.
+///
+/// Callers are main-actor tasks, and a main-actor task runs as a block on
+/// the main dispatch queue. `terminate` asks `MurAppDelegate`, which answers
+/// `.terminateLater` and replies from another main-actor task, while AppKit
+/// spins a nested run loop waiting for that reply. The run loop never drains
+/// the main queue from inside one of its own blocks, so the reply never came
+/// and mur hung in `terminate` instead of quitting. A run-loop block isn't a
+/// main-queue block, so the nested loop can run the reply.
 @MainActor
-func terminateApp() -> Never {
-    NSApplication.shared.terminate(nil)
-    die("Unreachable code")
+func terminateApp() {
+    RunLoop.main.perform(inModes: [.common]) {
+        NSApplication.shared.terminate(nil)
+    }
 }
 
 extension String {

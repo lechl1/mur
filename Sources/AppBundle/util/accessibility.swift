@@ -2,31 +2,36 @@ import AppKit
 import Common
 import PrivateApi
 
+/// mur — asks for Accessibility once, then waits for it instead of quitting.
+///
+/// Upstream reset the grant and quit when it was missing. The reset named
+/// `bobko.aerospace`, not mur's bundle, so it never cleared anything; the
+/// quit ran from inside a main-actor job and hung (see `terminateApp`); and
+/// every launch raised a fresh prompt the user had no time to answer. Now a
+/// release build shows the prompt, says so in the menu bar, and carries on
+/// with startup the moment the grant arrives, so the startup restore still
+/// sees every window. A debug build doesn't wait: each ad-hoc-signed rebuild
+/// loses its grant, and the CLI / data-model work must keep going without it
+/// (window moves are no-ops until it is re-granted).
 @MainActor
-func checkAccessibilityPermissions() {
+func checkAccessibilityPermissions() async throws {
     let options = [axTrustedCheckOptionPrompt: true]
-    if !AXIsProcessTrustedWithOptions(options as CFDictionary) {
-        // mur — patch for the dogfood loop. Each ad-hoc-signed debug build
-        // gets a fresh identity hash, so previously-granted Accessibility
-        // is revoked on every rebuild. Upstream's behavior (resetAccess +
-        // terminateApp) makes the dev loop unworkable: re-grant in System
-        // Settings on every iteration. In DEBUG: log loudly, leave the
-        // tccutil entry alone, and keep the daemon alive so CLI/data-model
-        // work continues. AX-dependent operations (window moves) will
-        // silently no-op until the user re-grants. RELEASE keeps the
-        // original strict behavior.
-        if isDebug {
-            print("⚠️  mur DEBUG: Accessibility not granted — daemon staying up but window moves are no-ops.")
-            print("    Grant via System Settings → Privacy & Security → Accessibility → MurApp.")
-            return
-        }
-        resetAccessibility()
-        terminateApp()
+    if AXIsProcessTrustedWithOptions(options as CFDictionary) { return }
+    if isDebug {
+        print("⚠️  mur DEBUG: Accessibility not granted — daemon staying up but window moves are no-ops.")
+        print("    Grant via System Settings → Privacy & Security → Accessibility → MurApp.")
+        return
     }
+    TrayMenuModel.shared.trayText = "⚠️ mur: grant Accessibility"
+    try await waitUntilTrusted(AXIsProcessTrusted)
 }
 
-private func resetAccessibility() {
-    _ = try? Process.run(URL(filePath: "/usr/bin/tccutil"), arguments: ["reset", "Accessibility", aeroSpaceAppId])
+/// Polls `isTrusted` until it answers true. `Task.sleep` only throws
+/// `CancellationError`.
+func waitUntilTrusted(_ isTrusted: () -> Bool, every interval: Duration = .seconds(1)) async throws {
+    while !isTrusted() {
+        try await Task.sleep(for: interval)
+    }
 }
 
 protocol ReadableAttr: Sendable {

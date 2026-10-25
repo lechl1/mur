@@ -357,6 +357,22 @@ When mur is untrusted the menu-bar item reads
 (`updateTrayText`), because the old signal was a `print` that nobody sees
 when the app was launched from Finder.
 
+A release build without the grant **waits for it, never quits**
+(`checkAccessibilityPermissions`): one prompt, the menu-bar warning, and
+startup carries on the moment the grant arrives. The inherited AeroSpace
+path reset the grant and quit, which raised a new prompt on every launch,
+and its reset named `bobko.aerospace` rather than mur's bundle.
+
+**Never call `NSApplication.terminate` from a main-actor task.** That task
+is a main-queue block, `MurAppDelegate` replies to `.terminateLater` from
+another one, and the nested run loop `terminate` spins never drains the main
+queue from inside a main-queue block: mur hangs in `terminate`. Use
+`terminateApp()`, which calls it from a run-loop block.
+
+The Accessibility list can show both **Mur** (`/Applications/Mur.app`,
+`com.mur.MurApp`) and **MurApp** (`.debug/MurApp.app`,
+`bobko.aerospace.debug`): separate bundles, separate grants.
+
 ## Hidden windows come back when mur stops (`HiddenWindows.swift`)
 
 mur hides the windows of every workspace that isn't on screen by moving
