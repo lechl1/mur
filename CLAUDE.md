@@ -241,6 +241,15 @@ relaunches takes seconds to map, a browser reopening tabs longer. So
 restore mode stays on for `restoreSettle` (60s) and ends early once every
 remembered window has been claimed (`unclaimedRestoreEntries`).
 
+**Windows macOS reopened at login are restored too** (`LoginRestore.swift`).
+With "Reopen windows when logging back in", loginwindow relaunches the last
+session's apps in a burst right after login, and mur, starting at login
+alongside them, runs its first restore before their windows exist. Those
+windows used to count as opened by the user (`openedLaterIds`): left on the
+active workspace, never steered on an app-pool guess. A window whose app
+launched within `loginBurst` (60s) of the console login (utmpx) is treated
+as part of the startup batch instead, while restore mode lasts.
+
 ## Layout templates (`save-layout` / `open-layout`)
 
 `mur save-layout <name>` writes a workspace as a template,

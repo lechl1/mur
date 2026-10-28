@@ -320,7 +320,9 @@ func restoreWindowStateOnRegister(_ window: Window) {
     // Placed from a layout template: that cell is the one the user asked for.
     if templatePlacedIds.remove(window.windowId) != nil { return }
     pendingRestoreIds.insert(window.windowId)
-    if !isStartup { openedLaterIds.insert(window.windowId) }
+    // A window macOS reopened at login is not one the user opened, even
+    // though it registered after the startup batch (`wasReopenedAtLogin`).
+    if !isStartup, !wasReopenedAtLogin(window) { openedLaterIds.insert(window.windowId) }
     coordinatedRestoreTask?.cancel()
     coordinatedRestoreTask = Task { @MainActor in
         // The 90ms debounce exists for the startup registration loop. Once
