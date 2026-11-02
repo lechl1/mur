@@ -25,6 +25,8 @@ func setUpWorkspacesForTests() {
     config.modes = [mainModeId: Mode(bindings: [:])]
     config.persistentWorkspaces = []
 
+    explicitlyFloatingWindowIds = []
+
     for workspace in Workspace.all {
         for child in workspace.children {
             child.unbindFromParent()

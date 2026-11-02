@@ -42,6 +42,9 @@ struct StackingPlaceCommand: Command {
 
         let span = TileSpan(lane: lane, slot0: slot0, slot1: slot1)
         workspace.stackingLayout.place(window.windowId, at: span)
+        // Placing a floating window is the way back to tiled.
+        explicitlyFloatingWindowIds.remove(window.windowId)
+        tileInTreeIfInGrid(window, in: workspace)
         StackingHud.shared.update(layout: workspace.stackingLayout, span: span)
 
         // Persist to WindowMemory so future opens of the same app+title

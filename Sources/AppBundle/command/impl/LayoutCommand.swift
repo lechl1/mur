@@ -31,6 +31,7 @@ struct LayoutCommand: Command {
             case .vertical:
                 return changeTilingLayout(io, targetLayout: nil, targetOrientation: .v, window: window)
             case .tiling:
+                explicitlyFloatingWindowIds.remove(window.windowId)
                 guard let parent = window.parent else { return .fail }
                 switch parent.cases {
                     case .macosPopupWindowsContainer:
@@ -42,10 +43,14 @@ struct LayoutCommand: Command {
                     case .workspace(let workspace):
                         window.lastFloatingSize = try await window.getAxSize() ?? window.lastFloatingSize
                         try await window.relayoutWindow(on: workspace, forceTile: true)
+                        tryRegisterInStackingLayout(window)
                         return .succ
                 }
             case .floating:
                 let workspace = target.workspace
+                explicitlyFloatingWindowIds.insert(window.windowId)
+                // mur — out of the grid too, or it keeps rendering in its cell.
+                _ = workspace.stackingLayout.remove(window.windowId)
                 window.bindAsFloatingWindow(to: workspace)
                 if let size = window.lastFloatingSize { window.setAxFrame(nil, size) }
                 return .succ

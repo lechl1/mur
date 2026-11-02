@@ -100,43 +100,6 @@ extension Workspace {
             window.lastAppliedLayoutVirtualRect = r
             window.lastAppliedLayoutPhysicalRect = r
             animationBatch.append((window: window, from: previous, to: r))
-
-            // mur — auto-float non-resizable windows. Once per window:
-            // wait briefly for the resize to settle, then compare the
-            // actual rect against what we asked for. If both dims differ
-            // by more than 150px, the app has a fixed window size we
-            // can't tile — float it. Threshold accommodates min-size
-            // constraints that narrow ONE dimension only.
-            if !stackingLayout.verifiedResizableWindows.contains(windowId)
-                && !stackingLayout.nonResizableWindows.contains(windowId)
-            {
-                let workspace = self
-                Task { @MainActor in
-                    try? await Task.sleep(nanoseconds: 150_000_000)
-                    // Skip while the animator is still driving this window —
-                    // its live rect is mid-flight, not the applied target.
-                    if WindowAnimator.shared.isDrivingFrame(windowId) { return }
-                    guard let actual = try? await window.getAxRect() else { return }
-                    let widthDiff = abs(actual.width - r.width)
-                    let heightDiff = abs(actual.height - r.height)
-                    if widthDiff > 150 && heightDiff > 150 {
-                        workspace.stackingLayout.nonResizableWindows.insert(windowId)
-                        // Remember the app bundle so future windows of
-                        // the same app skip grid registration entirely
-                        // and open as floating.
-                        let appId = window.app.rawAppBundleId ?? ""
-                        if !appId.isEmpty { knownNonResizableAppIds.insert(appId) }
-                        _ = workspace.stackingLayout.remove(windowId)
-                        window.bindAsFloatingWindow(to: workspace)
-                        let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
-                        let cx = monRect.topLeftX + (monRect.width - actual.width) / 2
-                        let cy = monRect.topLeftY + (monRect.height - actual.height) / 2
-                        window.setAxFrame(CGPoint(x: cx, y: cy), actual.size)
-                    } else {
-                        workspace.stackingLayout.verifiedResizableWindows.insert(windowId)
-                    }
-                }
-            }
         }
         // mur — animate the whole set together (single shared clock → all
         // windows/columns in the move start and finish in lockstep).
@@ -326,8 +289,7 @@ extension TilingContainer {
 /// So: after the layout animation settles, compare the window's ACTUAL rect
 /// against the cell it was given and re-issue the frame if it doesn't fill
 /// it. Bounded by `fillRetryLimit` attempts per target so an app that
-/// physically cannot take the size isn't poked forever, and skipped for
-/// windows mur has already classified as non-resizable (those get floated).
+/// physically cannot take the size isn't poked forever.
 @MainActor private var fillAttempts: [WindowId: (target: Rect, count: Int)] = [:]
 private let fillRetryLimit = 2
 private let fillTolerance: CGFloat = 2
@@ -338,7 +300,6 @@ private let maxLearnedMinimumFraction: CGFloat = 0.9
 @MainActor
 private func scheduleFillCheck(window: Window, target: Rect, in workspace: Workspace) {
     let windowId = window.windowId
-    if workspace.stackingLayout.nonResizableWindows.contains(windowId) { return }
     let previous = fillAttempts[windowId]
     let sameTarget = previous.map {
         abs($0.target.width - target.width) <= fillTolerance

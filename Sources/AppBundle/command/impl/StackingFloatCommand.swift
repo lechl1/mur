@@ -29,6 +29,7 @@ struct StackingFloatCommand: Command {
             return .fail
         }
         layout.remove(window.windowId)
+        explicitlyFloatingWindowIds.insert(window.windowId)
         window.bindAsFloatingWindow(to: workspace)
         // Async work: center the window on its monitor + persist the
         // siblings' new cells. Both touch AX or disk; do them off the

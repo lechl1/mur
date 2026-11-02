@@ -52,45 +52,15 @@ final class StackingDragDropTest: XCTestCase {
         assertEquals(b.stackingLayout.placements[1], .single(lane: 0, slot: 0))
     }
 
-    func testAWindowFloatedAsNonResizableTilesWhenDropped() {
-        // The verdict is a one-shot guess; moving the window retries it,
-        // as `move-node-to-workspace` does.
+    func testAWindowTheUserFloatedStaysFloating() {
         let a = Workspace.get(byName: "a")
         let b = Workspace.get(byName: "b")
         _ = TestWindow.new(id: 1, parent: a).focusWindow()
-        a.stackingLayout.nonResizableWindows.insert(1)
+        explicitlyFloatingWindowIds.insert(1)
         TestWindow.new(id: 2, parent: b.rootTilingContainer)
         b.stackingLayout.place(2, at: .soleSlot(lane: 0))
 
-        commitStackingDrop(StackingDragSession(windowId: 1, workspace: a, targetWorkspace: b, hoverCell: (lane: 0, slot: 1)))
-
-        XCTAssertFalse(Window.get(byId: 1)?.isFloating ?? true)
-        assertEquals(b.stackingLayout.placements[1], .single(lane: 0, slot: 1))
-    }
-
-    func testAFloatingWindowTilesWhenDropped() {
-        // Floated without a verdict of its own: its app's was enough.
-        let a = Workspace.get(byName: "a")
-        let b = Workspace.get(byName: "b")
-        _ = TestWindow.new(id: 1, parent: a).focusWindow()
-        TestWindow.new(id: 2, parent: b.rootTilingContainer)
-        b.stackingLayout.place(2, at: .soleSlot(lane: 0))
-
-        commitStackingDrop(StackingDragSession(windowId: 1, workspace: a, targetWorkspace: b, hoverCell: (lane: 1, slot: 0)))
-
-        assertEquals(Window.get(byId: 1)?.nodeWorkspace, b)
-        XCTAssertFalse(Window.get(byId: 1)?.isFloating ?? true)
-        XCTAssertNotNil(b.stackingLayout.placements[1])
-    }
-
-    func testAWindowFloatingByDesignStaysFloating() {
-        let a = Workspace.get(byName: "a")
-        let b = Workspace.get(byName: "b")
-        _ = TestWindow.new(id: 1, parent: a).focusWindow()
-        TestWindow.new(id: 2, parent: b.rootTilingContainer)
-        b.stackingLayout.place(2, at: .soleSlot(lane: 0))
-
-        commitStackingDrop(StackingDragSession(windowId: 1, workspace: a, targetWorkspace: b, hoverCell: (lane: 0, slot: 0), tile: false))
+        commitStackingDrop(StackingDragSession(windowId: 1, workspace: a, targetWorkspace: b, hoverCell: (lane: 0, slot: 0)))
 
         assertEquals(Window.get(byId: 1)?.nodeWorkspace, b)
         XCTAssertTrue(Window.get(byId: 1)?.isFloating ?? false)

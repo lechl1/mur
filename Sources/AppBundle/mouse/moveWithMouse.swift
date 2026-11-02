@@ -69,29 +69,21 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
         moveStackingWindow(window, workspace: workspace)
         return
     }
-    // mur — a window outside the grid (floated as "non-resizable", or in the
+    // mur — a window outside the grid (one the user floated, or one in the
     // tree without a cell) dragged onto another monitor moves there the way
-    // `move-node-to-workspace` does, which tiles everything not floating by
-    // design. The tree paths below only rebound it, so it never tiled there.
+    // `move-node-to-workspace` does: a floating one stays floating, any
+    // other tiles. The tree paths below only rebound it, so it never tiled.
     if config.experimentalStackingLayout, let workspace = window.nodeWorkspace,
        window.parent is Workspace || window.parent is TilingContainer
     {
         let target = mouseLocation.monitorApproximation.activeWorkspace
         if target != workspace {
             currentlyManipulatedWithMouseWindowId = window.windowId
-            // Asked once per drag: the heuristic reads AX, and a drag fires
-            // a move notification per frame.
-            let tile = if let session = gridDragSession, session.windowId == window.windowId {
-                session.tile
-            } else {
-                await !floatsByDesign(window)
-            }
             gridDragSession = StackingDragSession(
                 windowId: window.windowId,
                 workspace: workspace,
                 targetWorkspace: target,
                 hoverCell: hoverCell(in: target),
-                tile: tile,
             )
             return
         }
@@ -133,15 +125,6 @@ private func moveStackingWindow(_ window: Window, workspace: Workspace) {
     } else if let hoverSpan {
         StackingHud.shared.update(layout: layout, span: hoverSpan, hoverSpan: hoverSpan)
     }
-}
-
-/// A dialog, or an app that floats by default: it stays floating wherever
-/// it's dragged. An unanswered AX read counts as one, the safe guess.
-@MainActor
-private func floatsByDesign(_ window: Window) async -> Bool {
-    if let appId = window.app.rawAppBundleId, floatByDefaultBundleIds.contains(appId) { return true }
-    guard let window = window as? MacWindow else { return false }
-    return (try? await window.isDialogHeuristic(getWindowLevel(for: window.windowId))) ?? true
 }
 
 /// The cell of `workspace`'s grid under the mouse; nil when that grid is empty.

@@ -105,9 +105,19 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   restore queued). The double move it guarded against (sync heuristic cell,
   then the async restore's remembered cell) is avoided instead by
   `openedLaterIds`: outside restore mode, a window opened while mur is running
-  keeps the cell it was mounted in and is only *remembered* by title. Only
-  apps that are floating by design (`floatByDefaultBundleIds`, known
-  non-resizable apps) start floating. **In the grid ⇒ tiled in the tree**
+  keeps the cell it was mounted in and is only *remembered* by title.
+- **Only the user floats a window.** A window floats only if it was floated
+  through mur — `layout floating` (also from `on-window-detected`) or
+  `stacking-float` — and recorded in `explicitlyFloatingWindowIds`.
+  `layout tiling` and `stacking-place` take it back out. mur never floats on
+  its own judgement: there is no float-by-default app list, no dialog float,
+  and no "non-resizable" auto-float — that one measured a window once,
+  floated it, and then floated every later window of its app, which left
+  ordinary Ghostty windows floating. Inherited tree code still binds some
+  windows as floating (a window back from minimize/fullscreen, the
+  closed-windows cache), so every full refresh runs
+  `tileWindowsNotExplicitlyFloating`, which tiles any floating window not in
+  the set. **In the grid ⇒ tiled in the tree**
   (`tileInTreeIfInGrid`, enforced on every layout): the inherited dialog
   heuristic floats a window that registers while it looks like a dialog
   (Spotify while hidden or launching), the grid mounted it anyway, and it

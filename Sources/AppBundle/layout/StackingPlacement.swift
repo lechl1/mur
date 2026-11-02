@@ -7,14 +7,6 @@ import Common
 /// `remember(...)` via the explicit `save()` call below.
 @MainActor let windowMemory = WindowMemory()
 
-/// App bundle IDs whose windows we've previously observed as
-/// non-resizable (the auto-float branch in `layoutWorkspaceWithStacking`
-/// sets this). New windows of these apps skip grid registration on
-/// open and stay floating, so we never see the brief in-grid flash
-/// before the float kicks in. In-memory only — apps not seen yet
-/// still go through the regular auto-float dance once.
-@MainActor var knownNonResizableAppIds: Set<String> = []
-
 /// Hardcoded list of bundle IDs mur recognizes as terminal emulators.
 /// A freshly-opened window of one of these apps gets its own column
 /// sized to a fixed fraction of the workspace width — see
@@ -32,41 +24,6 @@ import Common
     "co.zeit.hyper",             // Hyper
     "com.raphaelamorim.rio",     // Rio
 ]
-
-/// Hardcoded list of bundle IDs that should open FLOATING and CENTERED
-/// rather than tiled — the macOS System Settings app and other
-/// system dialog / utility windows. Extend as needed. (True modal dialogs
-/// with a dialog subrole are already handled via the popup shim; this list
-/// catches whole apps that present as normal windows but are dialog-like.)
-@MainActor let floatByDefaultBundleIds: Set<String> = [
-    "com.apple.systempreferences", // System Settings / System Preferences
-    "com.apple.SystemProfiler",    // System Information ("About This Mac")
-    "com.apple.ScreenSharing",     // Screen Sharing
-    "com.apple.print.add",         // Add Printer
-    "com.apple.PrintCenter",       // Print dialogs / queue
-    "com.apple.ColorSyncUtility",  // ColorSync Utility
-    "com.apple.KeychainAccess",    // Keychain Access
-]
-
-/// Pull `window` out of the grid, float it, and centre it on its monitor.
-/// The centring reads the window's AX size, so it's done asynchronously
-/// off the sync registration hot path.
-@MainActor
-func floatAndCenterWindow(_ window: Window, in workspace: Workspace) {
-    workspace.stackingLayout.remove(window.windowId)
-    window.bindAsFloatingWindow(to: workspace)
-    let windowId = window.windowId
-    Task { @MainActor in
-        guard let window = Window.get(byId: windowId), let workspace = window.nodeWorkspace else { return }
-        let monRect = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
-        let size: CGSize = (try? await window.getAxRect())?.size
-            ?? window.lastFloatingSize
-            ?? CGSize(width: monRect.width / 2, height: monRect.height / 2)
-        let cx = monRect.topLeftX + (monRect.width - size.width) / 2
-        let cy = monRect.topLeftY + (monRect.height - size.height) / 2
-        window.setAxFrame(CGPoint(x: cx, y: cy), size)
-    }
-}
 
 /// Fraction of the lane axis a freshly-opened terminal column occupies:
 /// 1/5 on ultrawide monitors (aspect ≥ 2:1), 1/3 otherwise. Because the
@@ -162,10 +119,7 @@ func forgetParkedCell(_ windowId: WindowId) {
 }
 
 /// Make a window that was just moved to `workspace` visible there. A tiled
-/// window gets a cell in the grid; if the placement declines it (an app known
-/// to be non-resizable, a dialog-like app) it is floated and centred instead,
-/// since a tiled window with no cell is never given a rect and stays where it
-/// was. A floating window keeps its old screen coordinates, which on another
+/// window gets a cell in the grid. A floating window keeps its old screen coordinates, which on another
 /// monitor are somewhere else entirely, so it is pulled onto this monitor.
 /// No-op while the grid is off.
 @MainActor
@@ -176,9 +130,6 @@ func mountMovedWindowInGrid(_ window: Window, in workspace: Workspace) {
         return
     }
     mountInStackingLayout(window, in: workspace)
-    if workspace.stackingLayout.placements[window.windowId] == nil {
-        floatAndCenterWindow(window, in: workspace)
-    }
 }
 
 @MainActor
@@ -214,20 +165,6 @@ private func mountInStackingLayout(_ window: Window, in workspace: Workspace) {
     // `mur stacking-move`, or `mur stacking-resize`, which run outside the
     // startup hot path and can safely await window.title there.
     let appId = window.app.rawAppBundleId ?? ""
-    // Skip grid registration for apps we've previously observed as
-    // non-resizable — they'd just be auto-floated milliseconds later
-    // anyway. Leaving them as floating from the start avoids the
-    // in-grid flash and a wasted setAxFrame round-trip.
-    if !appId.isEmpty && knownNonResizableAppIds.contains(appId) { return }
-
-    // mur — System Settings & other macOS dialog/utility apps float and
-    // centre by default (hardcoded list). Skip grid registration. A user
-    // who explicitly tiles one still gets it restored tiled via window
-    // memory (the async restore overrides this default).
-    if !appId.isEmpty && floatByDefaultBundleIds.contains(appId) {
-        floatAndCenterWindow(window, in: workspace)
-        return
-    }
     let shape = workspace.stackingLayout.shape
 
     // mur — a window back from ⌘H / minimize / fullscreen goes back where it

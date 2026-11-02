@@ -98,6 +98,7 @@ final class MacWindow: Window {
             }
         }
         forgetMinimizeState(of: windowId)
+        explicitlyFloatingWindowIds.remove(windowId)
         forgetOpenedLater(windowId)
         forgetParkedCell(windowId)
         forgetTerminalSessionOnWindowClose(windowId)
@@ -237,8 +238,8 @@ private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: M
     let windowLevel = getWindowLevel(for: windowId)
     return switch try await macApp.getAxUiElementWindowType(windowId, windowLevel) {
         case .popup: BindingData(parent: macosPopupWindowsContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
-        case .dialog: BindingData(parent: workspace, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
-        case .window: unbindAndGetBindingDataForNewTilingWindow(workspace, window: window)
+        // mur — a dialog tiles like any window: only the user floats one.
+        case .dialog, .window: unbindAndGetBindingDataForNewTilingWindow(workspace, window: window)
     }
 }
 

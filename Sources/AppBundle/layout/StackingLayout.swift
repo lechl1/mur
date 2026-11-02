@@ -734,17 +734,6 @@ final class StackingLayout {
     /// these weights are workspace-level.
     private var _laneWeights: [CGFloat]?
 
-    /// Window IDs auto-detected as non-resizable (app refused setAxFrame).
-    /// These are removed from the grid and floated. Session-only — a
-    /// reopened window goes through registration again (and may be
-    /// auto-floated again if it's still non-resizable).
-    var nonResizableWindows: Set<WindowId> = []
-
-    /// Window IDs that successfully accepted a setAxFrame within
-    /// tolerance. Cached so the post-layout verification AX query only
-    /// runs ONCE per window, not on every refresh.
-    var verifiedResizableWindows: Set<WindowId> = []
-
     /// mur — the smallest size each window has been seen to accept, in
     /// points (an app like Spotify refuses to go narrower than ~800px).
     /// Learned from the post-layout fill check, only ever raised. Stored as
