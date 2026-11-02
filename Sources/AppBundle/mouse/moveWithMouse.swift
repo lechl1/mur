@@ -69,6 +69,34 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
         moveStackingWindow(window, workspace: workspace)
         return
     }
+    // mur — a window outside the grid (floated as "non-resizable", or in the
+    // tree without a cell) dragged onto another monitor moves there the way
+    // `move-node-to-workspace` does, which tiles everything not floating by
+    // design. The tree paths below only rebound it, so it never tiled there.
+    if config.experimentalStackingLayout, let workspace = window.nodeWorkspace,
+       window.parent is Workspace || window.parent is TilingContainer
+    {
+        let target = mouseLocation.monitorApproximation.activeWorkspace
+        if target != workspace {
+            currentlyManipulatedWithMouseWindowId = window.windowId
+            // Asked once per drag: the heuristic reads AX, and a drag fires
+            // a move notification per frame.
+            let tile = if let session = gridDragSession, session.windowId == window.windowId {
+                session.tile
+            } else {
+                await !floatsByDesign(window)
+            }
+            gridDragSession = StackingDragSession(
+                windowId: window.windowId,
+                workspace: workspace,
+                targetWorkspace: target,
+                hoverCell: hoverCell(in: target),
+                tile: tile,
+            )
+            return
+        }
+        if gridDragSession?.windowId == window.windowId { gridDragSession = nil }
+    }
     guard let parent = window.parent else { return }
     switch parent.cases {
         case .workspace:
@@ -90,15 +118,9 @@ private func moveStackingWindow(_ window: Window, workspace: Workspace) {
     // mur — hit-test the grid of the monitor the MOUSE is on, not the
     // window's own: `cellAt` clamps an outside point to the last column,
     // so a drop on the other monitor used to snap back home.
-    let mouseLocation = mouseLocation
     let target = mouseLocation.monitorApproximation.activeWorkspace
     let layout = target.stackingLayout
-    let available = target.workspaceMonitor.visibleRectPaddedByOuterGaps
-    let resolved = ResolvedGaps(gaps: config.gaps, monitor: target.workspaceMonitor)
-    let slotGap = CGFloat(resolved.inner.get(
-        layout.shape.orientation == .landscape ? .v : .h,
-    ))
-    let hoverCell = layout.cellAt(point: mouseLocation, in: available, innerGap: slotGap)
+    let hoverCell = hoverCell(in: target)
     gridDragSession = StackingDragSession(
         windowId: window.windowId,
         workspace: workspace,
@@ -111,6 +133,27 @@ private func moveStackingWindow(_ window: Window, workspace: Workspace) {
     } else if let hoverSpan {
         StackingHud.shared.update(layout: layout, span: hoverSpan, hoverSpan: hoverSpan)
     }
+}
+
+/// A dialog, or an app that floats by default: it stays floating wherever
+/// it's dragged. An unanswered AX read counts as one, the safe guess.
+@MainActor
+private func floatsByDesign(_ window: Window) async -> Bool {
+    if let appId = window.app.rawAppBundleId, floatByDefaultBundleIds.contains(appId) { return true }
+    guard let window = window as? MacWindow else { return false }
+    return (try? await window.isDialogHeuristic(getWindowLevel(for: window.windowId))) ?? true
+}
+
+/// The cell of `workspace`'s grid under the mouse; nil when that grid is empty.
+@MainActor
+private func hoverCell(in workspace: Workspace) -> (lane: Int, slot: Int)? {
+    let layout = workspace.stackingLayout
+    let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+    let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
+    let slotGap = CGFloat(resolved.inner.get(
+        layout.shape.orientation == .landscape ? .v : .h,
+    ))
+    return layout.cellAt(point: mouseLocation, in: available, innerGap: slotGap)
 }
 
 @MainActor

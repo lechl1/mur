@@ -18,6 +18,10 @@ struct StackingDragSession {
     /// Cell of `targetWorkspace`'s grid under the cursor. nil → that grid
     /// is empty.
     var hoverCell: (lane: Int, slot: Int)?
+    /// Tile the window on a drop onto another monitor even if it floats
+    /// now. False for a window floating by design: a dialog, or an app on
+    /// `floatByDefaultBundleIds`.
+    var tile: Bool = true
 }
 
 /// Drop the dragged window: into the hovered cell, and — when the drag
@@ -30,6 +34,15 @@ func commitStackingDrop(_ session: StackingDragSession) {
     let target = session.targetWorkspace
     if target != session.workspace {
         _ = session.workspace.stackingLayout.remove(window.windowId)
+        // Dragging a window onto another monitor asks for it there, tiled.
+        // A float that came from a "non-resizable" guess — the window's or,
+        // more often, its whole app's (new Ghostty windows open floating
+        // once one Ghostty window measured wrong) — is dropped with it.
+        if session.tile, window.isFloating {
+            session.workspace.stackingLayout.nonResizableWindows.remove(window.windowId)
+            if let appId = window.app.rawAppBundleId { knownNonResizableAppIds.remove(appId) }
+            window.bind(to: session.workspace.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+        }
         _ = moveWindowToWorkspace(
             window, target, CmdIo(stdin: .emptyStdin),
             focusFollowsWindow: true, failIfNoop: false,
@@ -38,7 +51,9 @@ func commitStackingDrop(_ session: StackingDragSession) {
             mountInGrid: session.hoverCell == nil,
         )
     }
-    if let cell = session.hoverCell {
+    // A window floating by design (a dialog, a fixed-size app) stays floating
+    // where it was dropped: in the grid ⇒ tiled in the tree.
+    if let cell = session.hoverCell, !window.isFloating {
         target.stackingLayout.place(window.windowId, at: .single(lane: cell.lane, slot: cell.slot))
     }
 }
