@@ -99,6 +99,7 @@ final class MacWindow: Window {
         }
         forgetMinimizeState(of: windowId)
         explicitlyFloatingWindowIds.remove(windowId)
+        aspectLocks.removeValue(forKey: windowId)
         forgetOpenedLater(windowId)
         forgetParkedCell(windowId)
         forgetTerminalSessionOnWindowClose(windowId)

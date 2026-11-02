@@ -95,7 +95,8 @@ extension Workspace {
         for windowId in stackingLayout.zOrder {
             guard let window = Window.get(byId: windowId) else { continue }
             if window.windowId == currentlyManipulatedWithMouseWindowId { continue }
-            guard let r = stackingLayout.resolveRect(for: windowId, in: rect, innerGap: slotGap) else { continue }
+            guard let cell = stackingLayout.resolveRect(for: windowId, in: rect, innerGap: slotGap) else { continue }
+            let r = aspectFit(cell, lock: aspectLocks[windowId], minimumWidth: stackingLayout.minimumSizes[windowId]?.width ?? 0)
             let previous = window.lastAppliedLayoutPhysicalRect
             window.lastAppliedLayoutVirtualRect = r
             window.lastAppliedLayoutPhysicalRect = r
@@ -360,6 +361,17 @@ private func scheduleFillCheck(window: Window, target: Rect, in workspace: Works
             window.setAxFrame(target.topLeftCorner, target.size)
         }
         guard let window = Window.get(byId: windowId), let workspace = window.nodeWorkspace else { return }
+        // mur — taller than its cell: maybe an aspect-locked window (VLC)
+        // sizing its height from its width, over the window below or past
+        // the bottom of the screen (where macOS then shoves it onto another
+        // monitor). Fitted to the cell's height from now on. Only a window
+        // whose height doesn't follow its width has a minimum height.
+        if observed.height > target.height + fillTolerance,
+           await learnAspectLock(window, target: target, tall: Rect(topLeftX: 0, topLeftY: 0, width: observed.width, height: observed.height), tolerance: fillTolerance)
+        {
+            try? await layoutWorkspaces()
+            return
+        }
         let screen = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
         let minWidth = observed.width > target.width + fillTolerance
             && observed.width < screen.width * maxLearnedMinimumFraction ? observed.width : 0
