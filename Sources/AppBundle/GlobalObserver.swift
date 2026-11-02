@@ -72,13 +72,7 @@ enum GlobalObserver {
                 // before resetting the mouse-manipulation state.
                 if let session = gridDragSession {
                     gridDragSession = nil
-                    if let cell = session.hoverCell, Window.get(byId: session.windowId) != nil {
-                        let target = TileSpan(
-                            lane0: cell.lane, lane1: cell.lane,
-                            slot0: cell.slot, slot1: cell.slot,
-                        )
-                        session.workspace.stackingLayout.place(session.windowId, at: target)
-                    }
+                    commitStackingDrop(session)
                     // mur — a mouse drag/resize just changed the layout;
                     // persist the new state (all windows, plus terminal
                     // sessions) the same way a keyboard move does.

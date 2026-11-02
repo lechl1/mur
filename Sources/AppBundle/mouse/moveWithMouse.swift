@@ -86,10 +86,15 @@ private func moveStackingWindow(_ window: Window, workspace: Workspace) {
     currentlyManipulatedWithMouseWindowId = window.windowId
     WindowAnimator.shared.cancel(window.windowId)
     window.lastAppliedLayoutPhysicalRect = nil
-    let layout = workspace.stackingLayout
-    guard let source = layout.placements[window.windowId] else { return }
-    let available = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
-    let resolved = ResolvedGaps(gaps: config.gaps, monitor: workspace.workspaceMonitor)
+    guard let source = workspace.stackingLayout.placements[window.windowId] else { return }
+    // mur — hit-test the grid of the monitor the MOUSE is on, not the
+    // window's own: `cellAt` clamps an outside point to the last column,
+    // so a drop on the other monitor used to snap back home.
+    let mouseLocation = mouseLocation
+    let target = mouseLocation.monitorApproximation.activeWorkspace
+    let layout = target.stackingLayout
+    let available = target.workspaceMonitor.visibleRectPaddedByOuterGaps
+    let resolved = ResolvedGaps(gaps: config.gaps, monitor: target.workspaceMonitor)
     let slotGap = CGFloat(resolved.inner.get(
         layout.shape.orientation == .landscape ? .v : .h,
     ))
@@ -97,11 +102,15 @@ private func moveStackingWindow(_ window: Window, workspace: Workspace) {
     gridDragSession = StackingDragSession(
         windowId: window.windowId,
         workspace: workspace,
+        targetWorkspace: target,
         hoverCell: hoverCell,
     )
-    StackingHud.shared.update(layout: layout, span: source, hoverSpan: hoverCell.map {
-        TileSpan(lane0: $0.lane, lane1: $0.lane, slot0: $0.slot, slot1: $0.slot)
-    })
+    let hoverSpan = hoverCell.map { TileSpan.single(lane: $0.lane, slot: $0.slot) }
+    if target == workspace {
+        StackingHud.shared.update(layout: layout, span: source, hoverSpan: hoverSpan)
+    } else if let hoverSpan {
+        StackingHud.shared.update(layout: layout, span: hoverSpan, hoverSpan: hoverSpan)
+    }
 }
 
 @MainActor
