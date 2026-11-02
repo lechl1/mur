@@ -21,6 +21,9 @@ aerospace summon-workspace [-h|--help] [--fail-if-noop] <workspace>
 The moved workspace becomes focused.
 The behavior is identical to Xmonad.
 
+If the workspace is visible on another monitor, the two monitors swap workspaces:
+that monitor shows the workspace the focused monitor showed before.
+
 The command makes sense only in multi-monitor setup.
 In single monitor setup the command is identical to `workspace` command.
 

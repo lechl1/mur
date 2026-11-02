@@ -16,8 +16,14 @@ struct SummonWorkspaceCommand: Command {
             }
         }
         let prevMonitor = workspace.isVisible ? workspace.workspaceMonitor : nil
+        let displaced = monitor.activeWorkspace
         if monitor.setActiveWorkspace(workspace) {
-            if let prevMonitor {
+            // mur — summoning a workspace off the other monitor SWAPS the two:
+            // that monitor gets the one just displaced here. The stub it used
+            // to get was the first hidden workspace assigned to it, so its
+            // number seemed to tick up at every summon. The stub stays the
+            // fallback for a displaced workspace force-assigned elsewhere.
+            if let prevMonitor, !prevMonitor.setActiveWorkspace(displaced) {
                 let stubWorkspace = getStubWorkspace(for: prevMonitor)
                 check(
                     prevMonitor.setActiveWorkspace(stubWorkspace),
