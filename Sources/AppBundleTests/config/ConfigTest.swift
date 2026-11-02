@@ -32,6 +32,13 @@ final class ConfigTest: XCTestCase {
         assertEquals(off.enableWindowAnimations, false)
     }
 
+    func testFocusFollowsMouseAcrossMonitorsIsOnUnlessTurnedOff() {
+        assertEquals(defaultConfig.focusFollowsMouseAcrossMonitors, true)
+        let (off, errors) = parseConfig("focus-follows-mouse-across-monitors = false")
+        assertEquals(errors, [])
+        assertEquals(off.focusFollowsMouseAcrossMonitors, false)
+    }
+
     func testConfigVersionOutOfBounds() {
         let (_, errors) = parseConfig(
             """

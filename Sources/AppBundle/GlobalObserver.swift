@@ -97,5 +97,11 @@ enum GlobalObserver {
                 }
             }
         }
+
+        // Only `.mouseMoved`: a drag delivers `.leftMouseDragged` instead, and
+        // the mouse-up handler above focuses where the drag ended.
+        NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { _ in
+            Task { @MainActor in onGlobalMouseMoved() }
+        }
     }
 }

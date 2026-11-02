@@ -129,6 +129,7 @@ private let configParser: [String: any ParserProtocol<Config>] = [
     "experimental-stacking-layout": Parser(\.experimentalStackingLayout, parseBool),
     "experimental-session-restore": Parser(\.experimentalSessionRestore, parseBool),
     "enable-window-animations": Parser(\.enableWindowAnimations, parseBool),
+    "focus-follows-mouse-across-monitors": Parser(\.focusFollowsMouseAcrossMonitors, parseBool),
 
     // Deprecated
     "non-empty-workspaces-root-containers-layout-on-startup": Parser(\._nonEmptyWorkspacesRootContainersLayoutOnStartup, parseStartupRootContainerLayout),

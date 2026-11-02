@@ -82,6 +82,7 @@ public enum RefreshSessionEvent: Sendable, CustomStringConvertible {
     case configAutoReload
     case globalObserver(String)
     case globalObserverLeftMouseUp
+    case globalObserverMouseMoved
     case menuBarButton
     case hotkeyBinding
     case startup
@@ -102,6 +103,7 @@ public enum RefreshSessionEvent: Sendable, CustomStringConvertible {
             case .configAutoReload: "configAutoReload"
             case .globalObserver(let str): "globalObserver(\(str))"
             case .globalObserverLeftMouseUp: "globalObserverLeftMouseUp"
+            case .globalObserverMouseMoved: "globalObserverMouseMoved"
             case .hotkeyBinding: "hotkeyBinding"
             case .menuBarButton: "menuBarButton"
             case .resetManipulatedWithMouse: "resetManipulatedWithMouse"

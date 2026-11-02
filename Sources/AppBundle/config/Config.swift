@@ -89,6 +89,10 @@ struct Config: ConvenienceCopyable {
     /// AX-driven animation lags on a given setup.
     var enableWindowAnimations: Bool = true
 
+    /// mur — when true (the mur default), the mouse moving onto another
+    /// monitor focuses that monitor's workspace, like a click on it does.
+    var focusFollowsMouseAcrossMonitors: Bool = true
+
     /// mur — when true (the mur default), on startup mur RELAUNCHES terminal
     /// sessions (Ghostty) whose window is no longer open, in their saved
     /// working directory, resuming `claude` for sessions that were running
