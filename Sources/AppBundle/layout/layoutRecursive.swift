@@ -297,6 +297,9 @@ private let fillTolerance: CGFloat = 2
 /// A learned minimum at or above this fraction of the screen isn't a
 /// minimum — the window is ignoring resizes. See `scheduleFillCheck`.
 private let maxLearnedMinimumFraction: CGFloat = 0.9
+/// Up to this much short of its row is a window snapping to its own size
+/// increments, not one that can't be taller. See `scheduleFillCheck`.
+private let maxSnapShortfall: CGFloat = 32
 
 @MainActor
 private func scheduleFillCheck(window: Window, target: Rect, in workspace: Workspace) {
@@ -345,7 +348,19 @@ private func scheduleFillCheck(window: Window, target: Rect, in workspace: Works
         //    launching) isn't mistaken for a constrained one;
         //  - less than `maxLearnedMinimumFraction` of the screen: a window
         //    that stays full-screen-sized is ignoring mur, not small-limited.
-        guard actual.width > target.width + fillTolerance || actual.height > target.height + fillTolerance else { return }
+        //
+        // mur — and SHORTER than its row (narrower in portrait), beside other
+        // rows: it can't be that tall, and the gap it leaves is the column
+        // not being filled. Same stability rule; then its size is recorded
+        // as a maximum and the rows around it take up the rest
+        // (`slotExtents`). Short by a few points is a window snapping to
+        // its own increments (a terminal's character rows), not a maximum.
+        let landscape = workspace.stackingLayout.shape.orientation == .landscape
+        let short = landscape
+            ? actual.height < target.height - maxSnapShortfall
+            : actual.width < target.width - maxSnapShortfall
+        let big = actual.width > target.width + fillTolerance || actual.height > target.height + fillTolerance
+        guard big || short else { return }
         var observed = actual.size
         for _ in 0 ..< 3 {
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -361,6 +376,18 @@ private func scheduleFillCheck(window: Window, target: Rect, in workspace: Works
             window.setAxFrame(target.topLeftCorner, target.size)
         }
         guard let window = Window.get(byId: windowId), let workspace = window.nodeWorkspace else { return }
+        if !big {
+            let layout = workspace.stackingLayout
+            guard let span = layout.placements[windowId], span.lane0 == span.lane1, span.slot0 == span.slot1,
+                  layout.slotCount(in: span.lane0) > 1 else { return }
+            layout.lowerMaximumSize(windowId, to: landscape
+                ? CGSize(width: CGFloat.infinity, height: observed.height)
+                : CGSize(width: observed.width, height: .infinity))
+            eprint("mur: window \(windowId) stays \(Int(landscape ? observed.height : observed.width))pt "
+                + "\(landscape ? "tall" : "wide"); the rest of its column takes up the room")
+            try? await layoutWorkspaces()
+            return
+        }
         // mur — taller than its cell: maybe an aspect-locked window (VLC)
         // sizing its height from its width, over the window below or past
         // the bottom of the screen (where macOS then shoves it onto another

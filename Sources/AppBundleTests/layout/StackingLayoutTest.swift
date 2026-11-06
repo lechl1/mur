@@ -636,4 +636,55 @@ struct StackingLayoutTest {
         #expect(abs((r?.topLeftY ?? 0) - 225) < 0.001)           // (900-450)/2
         #expect(abs((r?.width ?? 0) - 600) < 0.001)              // slot axis fills width
     }
+
+    // MARK: the rows fill the column
+
+    @Test func rowsAroundAWindowThatCantBeTallerTakeUpTheRoom() {
+        // Three rows of 200 in a 600-high column; the middle window stays
+        // 120 tall → it gets 120 and the other two split the other 480.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        for (slot, id) in [1, 2, 3].enumerated() { layout.place(UInt32(id), at: .single(lane: 0, slot: slot)) }
+        layout.lowerMaximumSize(2, to: CGSize(width: CGFloat.infinity, height: 120))
+        let rects = [1, 2, 3].compactMap { layout.resolveRect(for: UInt32($0), in: landscapeAvail, innerGap: 10) }
+        #expect(rects.count == 3)
+        #expect(abs(rects[1].height - 120) < 0.001)
+        #expect(abs(rects[0].height - rects[2].height) < 0.001)
+        // Edge to edge, no gap and no overlap.
+        #expect(abs(rects[0].topLeftY) < 0.001)
+        for (a, b) in zip(rects, rects.dropFirst()) { #expect(abs(a.topLeftY + a.height + 10 - b.topLeftY) < 0.001) }
+        #expect(abs(rects[2].topLeftY + rects[2].height - 600) < 0.001)
+        #expect(layout.cellAt(point: CGPoint(x: 10, y: rects[2].topLeftY + 1), in: landscapeAvail, innerGap: 10)?.slot == 2)
+    }
+
+    @Test func aRowWithATallMinimumPushesTheOthersUp() {
+        // Overflowing onto the row below was the old behaviour.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        layout.raiseMinimumSize(1, to: CGSize(width: 0, height: 450))
+        let r1 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
+        let r2 = layout.resolveRect(for: 2, in: landscapeAvail, innerGap: 0)
+        #expect(abs((r1?.height ?? 0) - 450) < 0.001)
+        #expect(abs((r2?.height ?? 0) - 150) < 0.001)
+        #expect(abs((r2?.topLeftY ?? 0) - 450) < 0.001)
+    }
+
+    @Test func aLoneRowFillsItsColumnWhateverItsLimits() {
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.lowerMaximumSize(1, to: CGSize(width: CGFloat.infinity, height: 100))
+        #expect(abs((layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)?.height ?? 0) - 600) < 0.001)
+    }
+
+    @Test func inPortraitTheWidthsFillTheRow() {
+        let layout = StackingLayout(shape: .portraitDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        layout.lowerMaximumSize(1, to: CGSize(width: 200, height: CGFloat.infinity))
+        let r1 = layout.resolveRect(for: 1, in: portraitAvail, innerGap: 0)
+        let r2 = layout.resolveRect(for: 2, in: portraitAvail, innerGap: 0)
+        #expect(abs((r1?.width ?? 0) - 200) < 0.001)
+        #expect(abs((r2?.width ?? 0) - 400) < 0.001)
+        #expect(abs((r2?.topLeftX ?? 0) - 200) < 0.001)
+    }
 }

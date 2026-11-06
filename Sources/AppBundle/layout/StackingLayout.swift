@@ -746,6 +746,18 @@ final class StackingLayout {
         minimumSizes[windowId] = CGSize(width: max(old.width, size.width), height: max(old.height, size.height))
     }
 
+    /// mur — the largest size each window has been seen to take, in points:
+    /// handed a taller row, it stayed shorter (an app with a maximum height,
+    /// or one that ignores resizes). `.infinity` where nothing is known.
+    /// Learned from the post-layout fill check, only ever lowered. The
+    /// slot-axis component is what `slotExtents` honours.
+    private(set) var maximumSizes: [WindowId: CGSize] = [:]
+
+    func lowerMaximumSize(_ windowId: WindowId, to size: CGSize) {
+        let old = maximumSizes[windowId] ?? CGSize(width: CGFloat.infinity, height: .infinity)
+        maximumSizes[windowId] = CGSize(width: min(old.width, size.width), height: min(old.height, size.height))
+    }
+
     func laneWeight(lane: Int) -> CGFloat {
         guard lane >= 0, lane < shape.lanes else { return Self.defaultColumnWidth }
         // The stored array can be shorter than `shape.lanes` (shape changed
@@ -871,13 +883,14 @@ extension StackingLayout {
         // by `place(...)`, so `lane0`'s weights are well-defined.
         let slots = slotCount(in: span.lane0)
         guard slots > 0, span.slot0 < slots, span.slot1 < slots else { return nil }
-        var weights: [CGFloat] = []
-        for s in 0 ..< slots { weights.append(slotWeight(lane: span.lane0, slot: s)) }
-        let totalWeight = weights.reduce(0, +)
-        guard totalWeight > 0 else { return nil }
+        guard (0 ..< slots).map({ slotWeight(lane: span.lane0, slot: $0) }).reduce(0, +) > 0 else { return nil }
         let totalSlotGap = max(0, CGFloat(slots - 1)) * innerGap
 
         let landscape = shape.orientation == .landscape
+        let slotAxisFull = landscape ? available.height : available.width
+        let rows = slotExtents(lane: span.lane0, usable: slotAxisFull - totalSlotGap)
+        let slotStart = rows[..<span.slot0].reduce(0, +) + CGFloat(span.slot0) * innerGap
+        let slotSpan = rows[span.slot0 ... span.slot1].reduce(0, +) + CGFloat(span.slot1 - span.slot0) * innerGap
         let laneAxisFull = landscape ? available.width : available.height
         let (laneCenterOffset, extents) = laneExtents(used: used, laneAxisFull: laneAxisFull, innerGap: innerGap)
         var lanePrefix: CGFloat = 0
@@ -890,26 +903,17 @@ extension StackingLayout {
         switch shape.orientation {
             case .landscape:
                 // Lane axis = X (fit-or-center), slot axis = Y (fills column).
-                let usableH = available.height - totalSlotGap
-                let x = available.topLeftX + laneStartLow
-                var y0 = available.topLeftY
-                for s in 0 ..< span.slot0 { y0 += weights[s] / totalWeight * usableH + innerGap }
-                var spanH: CGFloat = 0
-                for s in span.slot0 ... span.slot1 { spanH += weights[s] }
-                let h = spanH / totalWeight * usableH + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
                 // Never emit a negative size (e.g. gaps wider than the axis).
-                return Rect(topLeftX: x, topLeftY: y0, width: max(0, laneSpan), height: max(0, h))
+                return Rect(
+                    topLeftX: available.topLeftX + laneStartLow, topLeftY: available.topLeftY + slotStart,
+                    width: max(0, laneSpan), height: max(0, slotSpan),
+                )
             case .portrait:
                 // Lane axis = Y (fit-or-center), slot axis = X (fills row).
-                let usableW = available.width - totalSlotGap
-                let y = available.topLeftY + laneStartLow
-                var x0 = available.topLeftX
-                for s in 0 ..< span.slot0 { x0 += weights[s] / totalWeight * usableW + innerGap }
-                var spanW: CGFloat = 0
-                for s in span.slot0 ... span.slot1 { spanW += weights[s] }
-                let w = spanW / totalWeight * usableW + max(0, CGFloat(span.slot1 - span.slot0)) * innerGap
-                // Never emit a negative size (e.g. gaps wider than the axis).
-                return Rect(topLeftX: x0, topLeftY: y, width: max(0, w), height: max(0, laneSpan))
+                return Rect(
+                    topLeftX: available.topLeftX + slotStart, topLeftY: available.topLeftY + laneStartLow,
+                    width: max(0, slotSpan), height: max(0, laneSpan),
+                )
         }
     }
 
@@ -960,6 +964,49 @@ extension StackingLayout {
         let content = extents.reduce(0, +) + totalLaneGap
         return (max(0, (laneAxisFull - content) / 2), extents)
     }
+
+    /// The rendered slot-axis extent (points, gaps excluded) of each slot in
+    /// `lane`: row heights in landscape, widths in portrait. Shared by
+    /// `resolveRect` and `cellAt`.
+    ///
+    /// mur — THE ROWS FILL THE COLUMN. Slots share `usable` by weight, but
+    /// a window that can't be shorter than its share (`minimumSizes`) or
+    /// can't be taller (`maximumSizes`) is pinned at that size, and the
+    /// rows around it take up the difference. Otherwise it overflows onto
+    /// the row below, or stops short and leaves a gap nobody fills. Only
+    /// when every row is pinned short is there nothing left to fill with.
+    func slotExtents(lane: Int, usable: CGFloat) -> [CGFloat] {
+        let slots = slotCount(in: lane)
+        let weights = (0 ..< slots).map { slotWeight(lane: lane, slot: $0) }
+        let totalWeight = weights.reduce(0, +)
+        guard totalWeight > 0, usable > 0 else { return weights.map { _ in 0 } }
+        let base = weights.map { $0 / totalWeight * usable }
+        // A lone row is the whole column whatever its window's limits.
+        guard slots > 1 else { return base }
+        let landscape = shape.orientation == .landscape
+        var lo = [CGFloat](repeating: 0, count: slots)
+        var hi = [CGFloat](repeating: .infinity, count: slots)
+        for (id, span) in placements where span.lane0 == lane && span.lane1 == lane && span.slot0 == span.slot1 {
+            if let size = minimumSizes[id] { lo[span.slot0] = max(lo[span.slot0], min(usable, landscape ? size.height : size.width)) }
+            if let size = maximumSizes[id] { hi[span.slot0] = min(hi[span.slot0], landscape ? size.height : size.width) }
+        }
+        for i in 0 ..< slots { hi[i] = max(hi[i], lo[i]) }
+        // Pin each row its share would push past a limit, then re-share
+        // what's left among the rest, until nothing new is pinned.
+        var pinned: [Int: CGFloat] = [:]
+        var extents = base
+        while true {
+            let free = base.indices.filter { pinned[$0] == nil }
+            let room = max(0, usable - pinned.values.reduce(0, +))
+            let freeBase = free.reduce(CGFloat(0)) { $0 + base[$1] }
+            for i in free { extents[i] = freeBase > 0 ? base[i] / freeBase * room : 0 }
+            for (i, v) in pinned { extents[i] = v }
+            let newlyPinned = free.filter { extents[$0] < lo[$0] || extents[$0] > hi[$0] }
+            if newlyPinned.isEmpty { break }
+            for i in newlyPinned { pinned[i] = extents[i] < lo[i] ? lo[i] : hi[i] }
+        }
+        return extents
+    }
 }
 
 // MARK: - Hit testing
@@ -1000,18 +1047,15 @@ extension StackingLayout {
             if mainPt < c + w { lane = l; break }
             c += w + innerGap
         }
-        // Walk slot partition within that lane.
+        // Walk slot partition within that lane (mirrors resolveRect).
         let slots = slotCount(in: lane)
         guard slots > 0 else { return (lane, 0) }
-        var sw: [CGFloat] = []
-        for s in 0 ..< slots { sw.append(slotWeight(lane: lane, slot: s)) }
-        let totalSW = sw.reduce(0, +)
         let totalSlotGap = max(0, CGFloat(slots - 1)) * innerGap
-        let usableSec = usableSecAxis - totalSlotGap
+        let rows = slotExtents(lane: lane, usable: usableSecAxis - totalSlotGap)
         var c2 = secStart
         var slot = slots - 1
         for s in 0 ..< slots {
-            let w = sw[s] / totalSW * usableSec
+            let w = rows[s]
             if secPt < c2 + w { slot = s; break }
             c2 += w + innerGap
         }

@@ -76,6 +76,14 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   column the width it had in the saved arrangement, and the defaults only
   to a column the arrangement doesn't know.
 
+- **The rows fill the column** (the widths fill the row in portrait).
+  `slotExtents` shares the slot axis by slot weight, but pins a row whose
+  window can't be shorter (`minimumSizes`) or taller (`maximumSizes`) at
+  that size, and the other rows take up the difference. The fill check
+  learns a maximum when a window with column mates settles more than
+  `maxSnapShortfall` short of its row; less is a window snapping to its own
+  increments. A lone row always gets the whole column.
+
 - **No empty columns.** A lane only exists while a window can actually
   render in it. `layoutWorkspaceWithStacking` prunes cells whose window is
   gone, has moved workspace, or sits in a macOS-native shim container
