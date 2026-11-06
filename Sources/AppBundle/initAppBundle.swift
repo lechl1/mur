@@ -27,6 +27,7 @@ import Foundation
         }
 
         try await checkAccessibilityPermissions()
+        try await waitForScreenUnlock()
         startUnixSocketServer()
         GlobalObserver.initObserver()
         Workspace.garbageCollectUnusedWorkspaces() // init workspaces

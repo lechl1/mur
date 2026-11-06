@@ -23,13 +23,35 @@ func checkAccessibilityPermissions() async throws {
         return
     }
     TrayMenuModel.shared.trayText = "⚠️ mur: grant Accessibility"
-    try await waitUntilTrusted(AXIsProcessTrusted)
+    try await waitUntil(AXIsProcessTrusted)
 }
 
-/// Polls `isTrusted` until it answers true. `Task.sleep` only throws
+/// mur — the startup restore waits for the screen to be unlocked.
+///
+/// While the lock screen is up mur sees no windows at all, so a mur that
+/// starts then (depot reinstalling it while you're away) restored an empty
+/// screen. Every window turned up after the unlock as one just opened,
+/// long past the restore: placed like a new window at the default width,
+/// on whichever workspace was active, and the terminal sessions it
+/// couldn't see were relaunched. Waiting keeps the restore for the moment
+/// the windows can be seen. A screen that locks while mur runs is no
+/// matter: the lock screen never takes windows away (`lockScreenAppBundleId`).
+@MainActor
+func waitForScreenUnlock() async throws {
+    guard isScreenLocked() else { return }
+    TrayMenuModel.shared.trayText = "🔒 mur: waiting for unlock"
+    try await waitUntil { !isScreenLocked() }
+}
+
+func isScreenLocked() -> Bool {
+    let session = CGSessionCopyCurrentDictionary() as? [String: Any]
+    return (session?["CGSSessionScreenIsLocked"] as? NSNumber)?.boolValue ?? false
+}
+
+/// Polls `isDone` until it answers true. `Task.sleep` only throws
 /// `CancellationError`.
-func waitUntilTrusted(_ isTrusted: () -> Bool, every interval: Duration = .seconds(1)) async throws {
-    while !isTrusted() {
+func waitUntil(_ isDone: () -> Bool, every interval: Duration = .seconds(1)) async throws {
+    while !isDone() {
         try await Task.sleep(for: interval)
     }
 }

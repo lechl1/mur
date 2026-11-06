@@ -7,7 +7,7 @@ import Testing
 struct AccessibilityWaitTest {
     @Test func itReturnsAsSoonAsTheGrantArrives() async throws {
         var asked = 0
-        try await waitUntilTrusted({
+        try await waitUntil({
             asked += 1
             return asked == 3
         }, every: .milliseconds(1))
@@ -16,7 +16,7 @@ struct AccessibilityWaitTest {
 
     @Test func anAlreadyTrustedProcessDoesNotWait() async throws {
         var asked = 0
-        try await waitUntilTrusted({
+        try await waitUntil({
             asked += 1
             return true
         }, every: .seconds(60))
