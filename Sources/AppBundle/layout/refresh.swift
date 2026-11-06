@@ -109,6 +109,7 @@ func runHeavyCompleteRefreshSession(
                 updateTrayText()
                 SecureInputPanel.shared.refresh()
                 try await normalizeLayoutReason()
+                updateGhostWindows()
                 tileWindowsNotExplicitlyFloating()
                 if shouldLayoutWorkspaces { try await layoutWorkspaces() }
             }

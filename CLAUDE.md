@@ -117,7 +117,11 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   windows as floating (a window back from minimize/fullscreen, the
   closed-windows cache), so every full refresh runs
   `tileWindowsNotExplicitlyFloating`, which tiles any floating window not in
-  the set. **In the grid ⇒ tiled in the tree**
+  the set. The one exception is a **ghost** (`GhostWindows.swift`): a window
+  the window server draws transparent, (next to) 0×0, or not at all — Dimify
+  keeps its closed settings window that way. Every full refresh parks ghosts
+  out of the grid, leaves them floating without recording them as explicit
+  floats, and tiles them back into their old cell once they're drawn again. **In the grid ⇒ tiled in the tree**
   (`tileInTreeIfInGrid`, enforced on every layout): the inherited dialog
   heuristic floats a window that registers while it looks like a dialog
   (Spotify while hidden or launching), the grid mounted it anyway, and it

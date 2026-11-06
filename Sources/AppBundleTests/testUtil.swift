@@ -26,6 +26,7 @@ func setUpWorkspacesForTests() {
     config.persistentWorkspaces = []
 
     explicitlyFloatingWindowIds = []
+    ghostWindowIds = []
 
     for workspace in Workspace.all {
         for child in workspace.children {
