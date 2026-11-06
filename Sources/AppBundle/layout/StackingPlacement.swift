@@ -301,7 +301,14 @@ private func runCoordinatedRestore() async {
     let isStartupRestore = unclaimedRestoreEntries > 0
         && Date.now < (restoreModeDeadline ?? .distantPast)
 
-    struct Tiled { let window: Window; let workspace: Workspace; let lane: Int; let slot: Int }
+    struct Tiled {
+        let window: Window
+        let workspace: Workspace
+        let lane: Int
+        let slot: Int
+        // The width its column had in the saved arrangement, if it has one.
+        var width: CGFloat?
+    }
     // Remembered cells still up for grabs, per app — see the fallback below.
     var appSpanPool: [String: [StoredWindowState]] = [:]
     var tiled: [Tiled] = []
@@ -349,6 +356,7 @@ private func runCoordinatedRestore() async {
         // Whether `recalled` names THIS window (title / terminal session)
         // or just a cell its app used to have (the pool below).
         var isAppPoolGuess = false
+        var savedWidth: CGFloat?
         if let spot = arrangementStore.claim(await arrangedWindow(window)) {
             recalled = StoredWindowState(
                 floating: false,
@@ -356,6 +364,7 @@ private func runCoordinatedRestore() async {
                 workspace: spot.workspace,
             )
             isAppPoolGuess = spot.isAppGuess
+            savedWidth = spot.width
         }
         if recalled == nil, sessionRestoreTerminalBundleIds.contains(appId),
            // `resolveTerminalCwd`, not `window.cwd`: a session mur itself
@@ -433,7 +442,7 @@ private func runCoordinatedRestore() async {
         let steer = isStartupRestore && !(openedLater && isAppPoolGuess)
         let targetWs = (steer && !state.workspace.isEmpty && state.workspace != curWs.name)
             ? Workspace.get(byName: state.workspace) : curWs
-        tiled.append(Tiled(window: window, workspace: targetWs, lane: state.span.lane0, slot: state.span.slot0))
+        tiled.append(Tiled(window: window, workspace: targetWs, lane: state.span.lane0, slot: state.span.slot0, width: savedWidth))
     }
 
     // Reconstruct each workspace's columns/rows from the tiled windows.
@@ -491,21 +500,33 @@ private func runCoordinatedRestore() async {
                 layout.place(t.window.windowId, at: .single(lane: column, slot: row))
             }
         }
-        // mur — reset every column to its natural width. `place()` rebalances
+        // mur — set every column's width outright. `place()` rebalances
         // lane weights as each window arrives, and that drift COMPOUNDS over
         // restarts (each restore re-places everything) until the columns
         // render as slivers — 9% of the screen for a terminal, and counting.
-        // Widths aren't persisted, so a restore is exactly the moment to
-        // start from the defaults again: a terminal column at its fixed
-        // fraction, everything else at the default column width.
+        //
+        // A column the saved arrangement knows gets the width it had when
+        // it was saved: a column the user widened stays wide across mur's
+        // restart (depot reinstalling it) and its windows' apps restarting.
+        // Absolute, so nothing compounds. A column it doesn't know starts
+        // from the defaults: a terminal column at its fixed fraction,
+        // everything else at the default column width.
         //
         // That reset is for the startup batch only. Later, the group is the
         // window(s) that just opened: columns that were already on screen
         // keep their widths, and only a brand-new column gets a default —
         // an equal share if the others already fill the screen, so a
         // full-width terminal plus a new one ends up 50/50, not 1/3 each.
+        let savedWidthById = Dictionary(
+            group.compactMap { t in t.width.map { (t.window.windowId, $0) } },
+            uniquingKeysWith: { first, _ in first },
+        )
         for lane in layout.usedLanes {
             let ids = layout.windows(in: lane)
+            if let saved = ids.lazy.compactMap({ savedWidthById[$0] }).first {
+                layout.setLaneAbsoluteWidth(saved, lane: lane)
+                continue
+            }
             if !isStartupRestore, let kept = ids.lazy.compactMap({ existingWidthById[$0] }).first {
                 layout.setLaneAbsoluteWidth(kept, lane: lane)
                 continue

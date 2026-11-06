@@ -225,8 +225,16 @@ final class ArrangementStore {
     /// The restore's lookup: the saved entry for this window, across all
     /// workspaces (sorted, so it's stable). Same identity first; for a
     /// terminal the same cwd next; then any entry of the app (`isAppGuess`).
-    /// Each entry is handed out once per run.
-    func claim(_ w: ArrangedWindow) -> (workspace: String, path: Arrangement.Path, isAppGuess: Bool)? {
+    /// Each entry is handed out once per run, with the width its column had.
+    struct Claim {
+        let workspace: String
+        let path: Arrangement.Path
+        let isAppGuess: Bool
+        /// The width of the column it was saved in.
+        let width: CGFloat
+    }
+
+    func claim(_ w: ArrangedWindow) -> Claim? {
         let candidates = workspaces.keys.sorted().flatMap { ws in
             Arrangement.paths(workspaces[ws] ?? []).map { (ws, $0, workspaces[ws]![$0.column].windows[$0.row]) }
         }.filter { !claimed.contains(Self.claimKey($0.0, $0.1)) }
@@ -235,7 +243,7 @@ final class ArrangementStore {
             ?? candidates.first { $0.2.appId == w.appId }.map { ($0, true) }
         guard let ((ws, path, _), guess) = pick else { return nil }
         claimed.insert(Self.claimKey(ws, path))
-        return (ws, path, guess)
+        return Claim(workspace: ws, path: path, isAppGuess: guess, width: workspaces[ws]![path.column].width)
     }
 
     private static func claimKey(_ ws: String, _ p: Arrangement.Path) -> String { "\(ws)|\(p.column)|\(p.row)" }

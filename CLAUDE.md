@@ -72,8 +72,9 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   at `1/(n+1)` and the others shrink proportionally — one full-width
   terminal plus a new one is 50/50, not 75/25. A narrow strip still opens
   the newcomer at its natural width and centres. Columns already on screen
-  keep their widths when a window joins: only the startup restore resets
-  widths to defaults.
+  keep their widths when a window joins. The startup restore gives each
+  column the width it had in the saved arrangement, and the defaults only
+  to a column the arrangement doesn't know.
 
 - **No empty columns.** A lane only exists while a window can actually
   render in it. `layoutWorkspaceWithStacking` prunes cells whose window is

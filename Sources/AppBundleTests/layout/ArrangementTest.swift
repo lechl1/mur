@@ -95,4 +95,17 @@ struct ArrangementTest {
         #expect(b?.isAppGuess == true)
         #expect(reloaded.claim(ArrangedWindow(appId: "term", title: "more")) == nil)
     }
+
+    /// mur's restart used to reset every column to the default width: the
+    /// restore now gets back the width the column was saved with.
+    @Test func claimHandsBackTheColumnsWidth() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mur-arr-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ArrangementStore(url: url)
+        let wide = ArrangedColumn(width: 0.7, windows: [w("creeper", "lab.home.creeper")])
+        store.update(live: ["4": [col(w("a")), wide]], ids: ["4": [[1], [2]]], restoring: false)
+        let reloaded = ArrangementStore(url: url)
+        #expect(reloaded.claim(w("creeper", "lab.home.creeper"))?.width == 0.7)
+        #expect(reloaded.claim(w("a"))?.width == 0.4)
+    }
 }
