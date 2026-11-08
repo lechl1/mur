@@ -45,10 +45,14 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   touched. Only the lane-axis component counts (width in landscape, height in
   portrait). The layout overview HUD (`StackingHud`) draws columns from
   `laneExtents` too, never from the raw weights, so it matches the screen.
-- **Resize-towards-center.** Mouse-resizing a column's lane-axis edge sets its
-  **absolute** width from the dragged extent (`StackingResize.snap`); neighbours
-  keep their widths and fit-or-center re-centers the strip, so a column grows /
-  shrinks symmetrically about the centre instead of shoving one neighbour.
+- **Resizing a column trades with the others.** Shrinking a column grows the
+  other columns and growing one shrinks them, in proportion to their widths,
+  so the strip keeps its total (`StackingResize.setLaneWidth`, shared by the
+  mouse drag `snap` and the keys `resizeLaneWidth`). Every column keeps at
+  least `minLaneWidth`. Only a lone column, with no one to trade with, changes
+  its own width and is re-centred. Rows already worked this way. An earlier
+  "resize-towards-center" rule, where the neighbours kept their widths and the
+  strip re-centred, left a shrunk column's room empty.
 - **A closing column's space goes back to the survivors, which then FILL
   the screen.** When the last window in a column goes away, the remaining
   columns scale up **proportionally** until they cover the whole lane axis:

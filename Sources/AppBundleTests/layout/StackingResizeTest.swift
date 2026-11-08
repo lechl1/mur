@@ -28,12 +28,11 @@ struct StackingResizeTest {
         #expect(result?.laneWeights == nil) // no lane-axis drag here
     }
 
-    @Test func landscapeRightDragGrowsCurrentLaneAbsolute() {
-        // 6-lane grid; 2 used lanes (0.5 each → filling). Dragging col 0's
-        // right edge sets col 0's ABSOLUTE width from its new rendered
-        // extent (600/900 = 0.667); col 1 is snapshotted at its current
-        // rendered fraction (0.5). fit-or-center then re-renders. Unused
-        // lanes stay at the default column width (0.5).
+    @Test func landscapeRightDragGrowsCurrentLaneAndShrinksTheOther() {
+        // 6-lane grid; 2 used lanes at the default 0.4 (a 0.8 strip).
+        // Dragging col 0's right edge gives it its new rendered extent
+        // (600/900 = 0.667); col 1 gives up the difference, so the strip
+        // stays 0.8. Unused lanes keep the default column width (0.4).
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
@@ -47,7 +46,7 @@ struct StackingResizeTest {
         let lw = result?.laneWeights ?? []
         #expect(lw.count == 6)
         #expect(abs(lw[0] - 0.6667) < 0.01)   // 600 / 900
-        #expect(abs(lw[1] - 0.4) < 0.01)      // snapshot of its rendered width
+        #expect(abs(lw[1] - 0.1333) < 0.01)   // 0.8 − 0.667
         for unused in 2 ..< 6 { #expect(abs(lw[unused] - 0.4) < 0.01) }
         #expect(result?.slotLane == nil)
     }
@@ -108,16 +107,15 @@ struct StackingResizeTest {
         #expect(lw.count == 6)
         // Portrait lane axis = Y. New extent 600 / usable 900 = 0.667.
         #expect(abs(lw[0] - 0.6667) < 0.01)
-        #expect(abs(lw[1] - 0.4) < 0.01)
+        #expect(abs(lw[1] - 0.1333) < 0.01)   // the other row gives up the difference
     }
 
     // MARK: lane-axis drag distributes across ALL lanes on the other side
 
-    @Test func landscapeRightDragThreeUsedLanesGrowsDraggedKeepsNeighbours() {
+    @Test func landscapeRightDragThreeUsedLanesShrinksTheOthersInProportion() {
         // 3 used lanes, each rendered 300 px wide (0.333 fraction). Drag
-        // lane 0 to 450 px. Its absolute width becomes 450/900 = 0.5; the
-        // neighbours are snapshotted at their rendered fraction (0.333) and
-        // kept — fit-or-center then shrinks everything to fit (sum 1.167).
+        // lane 0 to 450 px: it becomes 450/900 = 0.5, and the two others
+        // share the 0.167 it took, in proportion (0.25 each). Still sums to 1.
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
@@ -132,9 +130,54 @@ struct StackingResizeTest {
         let lw = result?.laneWeights ?? []
         #expect(lw.count == 6)
         #expect(abs(lw[0] - 0.5) < 0.01)      // 450 / 900
-        #expect(abs(lw[1] - 0.3333) < 0.01)   // snapshot of rendered 300 px
-        #expect(abs(lw[2] - 0.3333) < 0.01)
+        #expect(abs(lw[1] - 0.25) < 0.01)
+        #expect(abs(lw[2] - 0.25) < 0.01)
         for unused in 3 ..< 6 { #expect(abs(lw[unused] - 0.4) < 0.01) }
+    }
+
+    @Test func landscapeShrinkingAColumnGrowsTheOthersInProportion() {
+        // Widths 0.5 / 0.3 / 0.2 (filling). Shrink col 0 to 0.3: the 0.2 it
+        // frees goes to cols 1 and 2 in a 3:2 ratio → 0.42 / 0.28.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.place(3, at: .soleSlot(lane: 2))
+        layout.setLaneAbsoluteWidth(0.5, lane: 0)
+        layout.setLaneAbsoluteWidth(0.3, lane: 1)
+        layout.setLaneAbsoluteWidth(0.2, lane: 2)
+        let last = Rect(topLeftX: 0, topLeftY: 0, width: 450, height: 600)
+        let cur  = Rect(topLeftX: 0, topLeftY: 0, width: 270, height: 600)
+        let result = StackingResize.snap(.init(
+            layout: layout, windowId: 1,
+            lastAppliedRect: last, currentRect: cur,
+            available: landscapeAvail, innerGap: 0,
+        ))
+        let lw = result?.laneWeights ?? []
+        #expect(abs(lw[0] - 0.3) < 0.001)
+        #expect(abs(lw[1] - 0.42) < 0.001)
+        #expect(abs(lw[2] - 0.28) < 0.001)
+        layout.setLaneWeights(lw)
+        let r3 = layout.resolveRect(for: 3, in: landscapeAvail, innerGap: 0)
+        #expect(abs((r3?.maxX ?? 0) - 900) < 0.5) // still fills the screen
+    }
+
+    @Test func aColumnCannotSqueezeTheOthersAway() {
+        // Two filling columns; drag col 0 to the whole screen. Col 1 keeps
+        // the floor (minLaneWidth) and col 0 gets the rest.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.setLaneAbsoluteWidth(0.5, lane: 0)
+        layout.setLaneAbsoluteWidth(0.5, lane: 1)
+        let last = Rect(topLeftX: 0, topLeftY: 0, width: 450, height: 600)
+        let cur  = Rect(topLeftX: 0, topLeftY: 0, width: 900, height: 600)
+        let lw = StackingResize.snap(.init(
+            layout: layout, windowId: 1,
+            lastAppliedRect: last, currentRect: cur,
+            available: landscapeAvail, innerGap: 0,
+        ))?.laneWeights ?? []
+        #expect(abs(lw[1] - StackingResize.minLaneWidth) < 0.001)
+        #expect(abs(lw[0] + lw[1] - 1) < 0.001)
     }
 
     // MARK: jitter and edge cases

@@ -133,38 +133,25 @@ enum StackingResize {
             }
         }
 
-        // -- lane-axis resize → resize-towards-center ---------------
-        // Set the dragged column's ABSOLUTE width from its new rendered
-        // extent. The other used columns are first snapshotted at their
-        // current rendered widths (so they don't jump), then the dragged
-        // column is overwritten. `resolveRect`'s fit-or-center re-centers
-        // the strip afterwards, so the column grows/shrinks symmetrically
-        // about the screen centre (naru's resize-towards-center) instead
-        // of pushing a single neighbour off the edge.
+        // -- lane-axis resize: the other columns give or take --------
+        // The dragged column's new width comes from its new rendered
+        // extent; what it gains or loses the other used columns give or
+        // take, in proportion to their widths (`setLaneWidth`), so the
+        // strip keeps its total. A lone column has no one to trade with:
+        // it takes the width outright and fit-or-center re-centres it.
         var resultLaneWeights: [CGFloat]? = nil
         if (laneLow || laneHigh), sample.layout.usedLanes.contains(span.lane0) {
             let used = sample.layout.usedLanes
             // Any lane-axis edge resizes the column — including the OUTER
             // edge of an edge column (left edge of the left-most column /
-            // right edge of the right-most): dragging it into the centred
-            // slack grows the column, dragging inward shrinks it. fit-or-
-            // center re-centres the strip afterwards.
+            // right edge of the right-most).
             let usable = laneAxisExtent - max(0, CGFloat(used.count - 1)) * sample.innerGap
             if usable > 0 {
                 var weights: [CGFloat] = (0 ..< sample.layout.shape.lanes)
                     .map { sample.layout.laneWeight(lane: $0) }
-                // Snapshot used lanes as their current rendered fractions
-                // so non-dragged columns keep their on-screen width.
-                let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
-                let denom = max(1.0, usedTotal)
-                for l in used { weights[l] = weights[l] / denom }
-                // Dragged column's new absolute width, split evenly across
-                // the lanes it spans (single-lane is the common case).
                 let newExtent = orientation == .landscape
                     ? sample.currentRect.width : sample.currentRect.height
-                let laneCount = CGFloat(span.lane1 - span.lane0 + 1)
-                let perLane = max(0.05, (newExtent / usable) / laneCount)
-                for l in span.lane0 ... span.lane1 { weights[l] = perLane }
+                setLaneWidth(&weights, used: used, lanes: span.lane0 ... span.lane1, width: newExtent / usable)
                 resultLaneWeights = weights
             }
         }
@@ -175,6 +162,40 @@ enum StackingResize {
             laneWeights: resultLaneWeights,
         )
         return result.isEmpty ? nil : result
+    }
+
+    /// The narrowest a column gets from a resize, as a fraction of the lane axis.
+    static let minLaneWidth: CGFloat = 0.05
+
+    /// Give `lanes` (one column, possibly spanning several lanes) the
+    /// rendered `width`, a fraction of the lane axis. Used lanes are first
+    /// snapshotted at their rendered fractions (`w / max(1, total)`), so
+    /// nothing jumps. The other used columns then absorb the difference in
+    /// proportion to their widths: shrinking one grows the others, growing
+    /// one shrinks them, and the strip's total stays put. Every column is
+    /// floored at `minLaneWidth`. With no other column (a lone one), the
+    /// width is taken outright, capped at the full axis.
+    static func setLaneWidth(_ weights: inout [CGFloat], used: [Int], lanes: ClosedRange<Int>, width: CGFloat) {
+        let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
+        let denom = max(1.0, usedTotal)
+        for l in used { weights[l] = weights[l] / denom }
+        let span = lanes.filter { used.contains($0) }
+        let others = used.filter { !lanes.contains($0) }
+        guard !span.isEmpty else { return }
+        let count = CGFloat(span.count)
+        guard !others.isEmpty else {
+            let perLane = max(minLaneWidth, min(1.0, width) / count)
+            for l in span { weights[l] = perLane }
+            return
+        }
+        let total = used.reduce(0.0) { $0 + weights[$1] }
+        let othersTotal = others.reduce(0.0) { $0 + weights[$1] }
+        let floor = minLaneWidth * CGFloat(others.count)
+        let newSpan = max(minLaneWidth * count, min(total - floor, width))
+        let scale = othersTotal > 0 ? (total - newSpan) / othersTotal : 0
+        for l in others { weights[l] *= scale }
+        for l in span { weights[l] = newSpan / count }
+        repairFloor(weights: &weights, used: used, minPer: minLaneWidth)
     }
 
     /// Move `delta` weight from index `from` to index `to`. Floors at

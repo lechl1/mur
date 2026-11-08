@@ -8,10 +8,10 @@ import Foundation
 ///   - landscape: lanes are columns → `grow` widens the column;
 ///   - portrait: lanes are rows → `grow` makes the row taller.
 ///
-/// The width is ABSOLUTE (`resizeLaneAbsolute`, the same path the mouse
-/// resize takes), so fit-or-center re-centres the strip: the column grows
-/// and shrinks symmetrically about the screen centre and the neighbours
-/// keep their own widths. The slot axis (rows within a column) is
+/// The other columns give or take the difference in proportion to their
+/// widths (`resizeLaneWidth`, the same path the mouse resize takes): a
+/// column that shrinks grows the others, one that grows shrinks them, and
+/// the strip keeps its total. The slot axis (rows within a column) is
 /// untouched — that stays on `stacking-resize up/down`.
 struct StackingResizeLaneCommand: Command {
     let args: StackingResizeLaneCmdArgs
@@ -53,7 +53,7 @@ struct StackingResizeLaneCommand: Command {
             return .fail
         }
 
-        StackingResize.resizeLaneAbsolute(layout: layout, lane: current.lane0, signum: args.delta.val.signum)
+        StackingResize.resizeLaneWidth(layout: layout, lane: current.lane0, signum: args.delta.val.signum)
         // The window doesn't move; the HUD re-reads the lane weights.
         StackingHud.shared.update(layout: layout, span: current)
         Task { @MainActor in

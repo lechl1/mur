@@ -99,4 +99,27 @@ struct StackingResizeStepTest {
         StackingResize.resizeLane(layout: layout, lane: 0, signum: -1)
         #expect(layout.laneWeight(lane: 0) == before)
     }
+
+    @Test func shrinkingAColumnByKeyGrowsTheOther() {
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        layout.place(2, at: .soleSlot(lane: 1))
+        layout.setLaneAbsoluteWidth(0.5, lane: 0)
+        layout.setLaneAbsoluteWidth(0.5, lane: 1)
+        StackingResize.resizeLaneWidth(layout: layout, lane: 0, signum: -1)
+        #expect(abs(layout.laneWeight(lane: 0) - 0.4) < 1e-6)
+        #expect(abs(layout.laneWeight(lane: 1) - 0.6) < 1e-6)
+        StackingResize.resizeLaneWidth(layout: layout, lane: 0, signum: +1)
+        StackingResize.resizeLaneWidth(layout: layout, lane: 0, signum: +1)
+        #expect(abs(layout.laneWeight(lane: 0) - 0.6) < 1e-6)
+        #expect(abs(layout.laneWeight(lane: 1) - 0.4) < 1e-6)
+    }
+
+    @Test func aLoneColumnResizesByKeyOnItsOwn() {
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .soleSlot(lane: 0))
+        let before = layout.laneWeight(lane: 0)
+        StackingResize.resizeLaneWidth(layout: layout, lane: 0, signum: +1)
+        #expect(abs(layout.laneWeight(lane: 0) - (before + 0.1)) < 1e-6)
+    }
 }
