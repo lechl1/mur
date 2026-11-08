@@ -60,6 +60,31 @@ final class GhostWindowsTest: XCTestCase {
         assertEquals(windowsToRestore([1, 2]), [1])
     }
 
+    func testAWindowBoundIntoAGarbageCollectedWorkspaceIsTakenBack() {
+        // The restore picked workspace "10" (not persistent, still empty),
+        // awaited a title, a refresh garbage-collected "10", and the window
+        // was bound into that dead workspace: out of mur's control for good.
+        let dead = Workspace.get(byName: "10")
+        Workspace.garbageCollectUnusedWorkspaces()
+        let window = TestWindow.new(id: 1, parent: dead.rootTilingContainer)
+
+        reclaimOrphanedWindows([window])
+
+        let live = Workspace.get(byName: "10")
+        XCTAssertFalse(live === dead)
+        XCTAssertTrue(window.nodeWorkspace === live)
+        XCTAssertNotNil(live.stackingLayout.placements[1])
+    }
+
+    func testAWindowWithNoParentIsTakenBackOnTheFocusedWorkspace() {
+        let window = TestWindow.new(id: 1, parent: focus.workspace.rootTilingContainer)
+        window.unbindFromParent()
+
+        reclaimOrphanedWindows([window])
+
+        XCTAssertTrue(window.nodeWorkspace === focus.workspace)
+    }
+
     func testWhatCountsAsAGhost() {
         XCTAssertTrue(isGhostFrame(alpha: 0, size: CGSize(width: 800, height: 600)))
         XCTAssertTrue(isGhostFrame(alpha: 1, size: .zero))

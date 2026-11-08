@@ -314,7 +314,12 @@ private func runCoordinatedRestore() async {
 
     struct Tiled {
         let window: Window
-        let workspace: Workspace
+        // By name: the workspace is looked up when the window is moved, not
+        // here. Every window below awaits its title, and a refresh in one of
+        // those awaits garbage-collects a workspace that is still empty —
+        // any one not in `persistent-workspaces` — so the window was bound
+        // into a workspace mur no longer had and dropped out of its control.
+        let workspace: String
         let lane: Int
         let slot: Int
         // The width its column had in the saved arrangement, if it has one.
@@ -426,7 +431,7 @@ private func runCoordinatedRestore() async {
                 // column each instead of becoming two rows of one column.
                 tiled.append(Tiled(
                     window: window,
-                    workspace: Workspace.get(byName: home),
+                    workspace: home,
                     lane: unrankedLaneBase + min(unrankedCount, 999),
                     slot: 0,
                 ))
@@ -452,13 +457,13 @@ private func runCoordinatedRestore() async {
         // what mur is waiting for — never on a guess from its app's pool.
         let steer = isStartupRestore && !(openedLater && isAppPoolGuess)
         let targetWs = (steer && !state.workspace.isEmpty && state.workspace != curWs.name)
-            ? Workspace.get(byName: state.workspace) : curWs
+            ? state.workspace : curWs.name
         tiled.append(Tiled(window: window, workspace: targetWs, lane: state.span.lane0, slot: state.span.slot0, width: savedWidth))
     }
 
     // Reconstruct each workspace's columns/rows from the tiled windows.
-    for (_, group) in Dictionary(grouping: tiled, by: { $0.workspace.name }) {
-        guard let workspace = group.first?.workspace else { continue }
+    for (name, group) in Dictionary(grouping: tiled, by: \.workspace) {
+        let workspace = Workspace.get(byName: name)
         let layout = workspace.stackingLayout
         // mur — snapshot the width of every column that was already here
         // (keyed by a window in it), BEFORE the detach below: detaching a

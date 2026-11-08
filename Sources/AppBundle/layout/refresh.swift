@@ -220,8 +220,35 @@ private func refresh() async throws {
         }
     }
 
+    reclaimOrphanedWindows()
+
     // Garbage collect workspaces after apps, because workspaces contain apps.
     Workspace.garbageCollectUnusedWorkspaces()
+}
+
+/// mur — a window mur knows but no workspace it has holds: bound into a
+/// workspace that was garbage-collected while the window was on its way
+/// there, or left with no parent at all. Nothing lists, lays out or moves
+/// it any more — it is out of mur's control while mur still thinks it
+/// registered it, so it never registers again. Take it back: into the live
+/// workspace of the same name, else the focused one, and into its grid.
+@MainActor
+func reclaimOrphanedWindows(_ windows: [Window] = MacWindow.allWindows) {
+    for window in windows {
+        let home: Workspace
+        if let current = window.nodeWorkspace {
+            let live = Workspace.get(byName: current.name)
+            if live === current { continue }
+            home = live
+        } else if window.parent == nil {
+            home = focus.workspace
+        } else {
+            continue // minimized, fullscreen, a hidden app's or a popup: macOS has it
+        }
+        fputs("mur: window \(window.windowId) (\(window.app.name ?? "?")) belonged to no workspace; took it back into \(home.name)\n", stderr)
+        window.bind(to: home.rootTilingContainer, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
+        tryRegisterInStackingLayout(window)
+    }
 }
 
 func refreshObs(_: AXObserver, element: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
