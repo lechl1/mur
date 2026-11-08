@@ -384,10 +384,19 @@ from a terminal inherits *that terminal's* grant, so the same build works
 from the shell and is dead when launched from Finder or launchd.
 
 An ad-hoc signature has no stable designated requirement, so TCC keys the
-grant to the binary's cdhash and **every `just install` revokes it**. Set
-`MUR_CODESIGN_IDENTITY`, or create a self-signed code-signing certificate
-named `mur-dev` (Keychain Access → Certificate Assistant), and
-`install-app.sh` signs with it instead — then the grant survives rebuilds.
+grant to the binary's cdhash and **every `just install` revokes it**. So
+`install-app.sh` signs with `mur-dev` (or `MUR_CODESIGN_IDENTITY`), a leaf
+issued by the homelab code-signing CA on n5, and gives the bundle the
+**cask's own designated requirement**: `identifier "com.mur.MurApp" and
+certificate root = H"<CA root>"` (slipway/src/desktop.rs). A local install
+and a depot release are then the same app to TCC, and one grant covers
+both. A leaf with codesign's default requirement (`certificate leaf = …`)
+would survive rebuilds but lose the grant at every switch between a local
+build and `depot sync`. To issue `mur-dev` on another Mac: make an RSA key
+and CSR there, sign it on n5 as `slipway` with
+`~/.local/share/slipway/codesign/{root,ca-key}.pem` and the extensions of
+`slipway-codesign-issue` (ansible/roles/slipway/tasks/codesign.yml), and
+import key + leaf into the login keychain with `-T /usr/bin/codesign`.
 
 When mur is untrusted the menu-bar item reads
 `⚠️ mur: grant Accessibility` instead of the workspace list

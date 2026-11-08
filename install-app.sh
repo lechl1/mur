@@ -81,19 +81,34 @@ plutil -replace CFBundleVersion -string "$version" "$DEST/Contents/Info.plist"
 # `just install` silently revokes Accessibility: mur comes back up seeing
 # zero windows, with hotkeys that register and then do nothing.
 #
-# A self-signed certificate fixes that: the requirement is then "this
-# bundle id, signed by this cert", which survives rebuilds. Set
-# MUR_CODESIGN_IDENTITY, or create one named `mur-dev` (Keychain Access →
-# Certificate Assistant → Create a Certificate…, type "Code Signing",
-# self-signed) and it is picked up automatically.
+# The fix is a certificate issued by the homelab code-signing CA, the one
+# slipway signs the published cask with (slipway/src/desktop.rs). The
+# signature then carries the cask's own designated requirement,
+#   identifier "com.mur.MurApp" and certificate root = H"<CA root sha1>"
+# so TCC sees a local build and a depot release as the SAME app: one
+# Accessibility grant covers both, through rebuilds and `depot sync` alike.
+# The identity is `mur-dev` in the login keychain (a leaf the CA on n5
+# issued for this Mac); MUR_CODESIGN_IDENTITY overrides it. The CA root is
+# where ansible's codesign-trust.yml keeps it (MUR_CODESIGN_ROOT overrides).
 identity="${MUR_CODESIGN_IDENTITY:-}"
 if [ -z "$identity" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q '"mur-dev"'; then
     identity="mur-dev"
 fi
-codesign --force --deep --sign "${identity:--}" "$DEST" > /dev/null 2>&1 || true
-if [ -z "$identity" ]; then
+root_pem="${MUR_CODESIGN_ROOT:-$HOME/.local/share/homelab/codesign-root.pem}"
+bundle_id="$(plutil -extract CFBundleIdentifier raw "$DEST/Contents/Info.plist")"
+requirement=()
+if [ -n "$identity" ] && [ "$identity" != - ] && test -f "$root_pem"; then
+    root_sha1="$(openssl x509 -in "$root_pem" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')"
+    requirement=(-r="designated => identifier \"$bundle_id\" and certificate root = H\"$root_sha1\"")
+fi
+# Inside-out, not --deep: the CLI is signed first, then the bundle seals it.
+test -x "$DEST/Contents/MacOS/mur" && codesign --force --sign "${identity:--}" "$DEST/Contents/MacOS/mur"
+codesign --force --sign "${identity:--}" ${requirement[@]+"${requirement[@]}"} "$DEST"
+if [ -z "$identity" ] || [ "$identity" = - ]; then
     echo "ℹ️  Signed ad-hoc: this build must be re-granted Accessibility."
-    echo "   A self-signed 'mur-dev' certificate would make the grant stick."
+    echo "   A 'mur-dev' identity from the homelab CA would make the grant stick (see CLAUDE.md)."
+elif ! codesign -v -R="identifier \"$bundle_id\" and anchor trusted" "$DEST" 2> /dev/null; then
+    echo "⚠️  $identity does not chain to a trusted root: run ansible's \`just codesign-trust\`." >&2
 fi
 
 # Tell LaunchServices about the bundle right away, so Spotlight and
