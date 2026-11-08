@@ -13,8 +13,9 @@
 # than by xcodebuild: build-release.sh needs a codesign certificate, a
 # universal build and a clean worktree, none of which a local install
 # wants. Everything the app needs at runtime is the executable itself
-# (the Info.plist keys below plus an ad-hoc signature), so a hand-rolled
-# bundle behaves identically to the Xcode one.
+# (resources/Info.plist plus the signature), so a hand-rolled bundle
+# behaves identically to the Xcode one. This is the only bundle a local
+# build makes: Mur.app, `com.mur.MurApp`, the cask's own identity.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -24,8 +25,7 @@ APP_NAME="Mur"
 INSTALL_DIR="${MUR_INSTALL_DIR:-/Applications}"
 DEST="$INSTALL_DIR/$APP_NAME.app"
 
-SRC_APP="$REPO/.debug/MurApp.app"
-SRC_BIN="$SRC_APP/Contents/MacOS/MurApp"
+SRC_BIN="$REPO/.debug/MurApp"
 SRC_CLI="$REPO/.debug/mur"
 
 if [[ "${1:-}" == "--uninstall" ]]; then
@@ -72,44 +72,9 @@ cp "$REPO/resources/Info.plist" "$DEST/Contents/Info.plist"
 plutil -replace CFBundleShortVersionString -string "$version" "$DEST/Contents/Info.plist"
 plutil -replace CFBundleVersion -string "$version" "$DEST/Contents/Info.plist"
 
-# Signature. mur reads other apps' windows through the Accessibility API,
-# and macOS refuses to hand out that permission to an unsigned bundle.
-#
-# WHICH identity matters more than it looks. An ad-hoc signature (`-`) has
-# no stable designated requirement, so TCC remembers the grant by the
-# binary's cdhash — which changes on EVERY build. The result is that each
-# `just install` silently revokes Accessibility: mur comes back up seeing
-# zero windows, with hotkeys that register and then do nothing.
-#
-# The fix is a certificate issued by the homelab code-signing CA, the one
-# slipway signs the published cask with (slipway/src/desktop.rs). The
-# signature then carries the cask's own designated requirement,
-#   identifier "com.mur.MurApp" and certificate root = H"<CA root sha1>"
-# so TCC sees a local build and a depot release as the SAME app: one
-# Accessibility grant covers both, through rebuilds and `depot sync` alike.
-# The identity is `mur-dev` in the login keychain (a leaf the CA on n5
-# issued for this Mac); MUR_CODESIGN_IDENTITY overrides it. The CA root is
-# where ansible's codesign-trust.yml keeps it (MUR_CODESIGN_ROOT overrides).
-identity="${MUR_CODESIGN_IDENTITY:-}"
-if [ -z "$identity" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q '"mur-dev"'; then
-    identity="mur-dev"
-fi
-root_pem="${MUR_CODESIGN_ROOT:-$HOME/.local/share/homelab/codesign-root.pem}"
-bundle_id="$(plutil -extract CFBundleIdentifier raw "$DEST/Contents/Info.plist")"
-requirement=()
-if [ -n "$identity" ] && [ "$identity" != - ] && test -f "$root_pem"; then
-    root_sha1="$(openssl x509 -in "$root_pem" -noout -fingerprint -sha1 | sed 's/.*=//; s/://g' | tr 'A-F' 'a-f')"
-    requirement=(-r="designated => identifier \"$bundle_id\" and certificate root = H\"$root_sha1\"")
-fi
-# Inside-out, not --deep: the CLI is signed first, then the bundle seals it.
-test -x "$DEST/Contents/MacOS/mur" && codesign --force --sign "${identity:--}" "$DEST/Contents/MacOS/mur"
-codesign --force --sign "${identity:--}" ${requirement[@]+"${requirement[@]}"} "$DEST"
-if [ -z "$identity" ] || [ "$identity" = - ]; then
-    echo "ℹ️  Signed ad-hoc: this build must be re-granted Accessibility."
-    echo "   A 'mur-dev' identity from the homelab CA would make the grant stick (see CLAUDE.md)."
-elif ! codesign -v -R="identifier \"$bundle_id\" and anchor trusted" "$DEST" 2> /dev/null; then
-    echo "⚠️  $identity does not chain to a trusted root: run ansible's \`just codesign-trust\`." >&2
-fi
+# Signed like the cask, so a local install keeps the grant a release has
+# (and the other way round): see script/sign-app.sh.
+bash "$REPO/script/sign-app.sh" "$DEST"
 
 # Tell LaunchServices about the bundle right away, so Spotlight and
 # Finder see it (and pick up the new icon) without waiting for a rescan.

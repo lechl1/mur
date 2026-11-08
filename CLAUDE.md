@@ -364,16 +364,17 @@ from the installed copy. So the app is launchable from Finder/Spotlight
 and the CLI keeps working if the source tree moves.
 
 `install-app.sh` assembles the bundle by hand from the SwiftPM products
-(executable + Info.plist + ad-hoc signature + an `AppIcon.icns` built
+(executable + Info.plist + signature + an `AppIcon.icns` built
 with `sips`/`iconutil` — `actool` needs an Xcode IDE plugin host that is
 often broken); `build-release.sh` is not used because it wants a codesign
 certificate, a universal build and a clean worktree.
 
-Accessibility is per-bundle-path, so the first launch of
-`/Applications/Mur.app` **from Finder** raises a fresh "control this
-computer" prompt even if `.debug/MurApp.app` was already approved — until
-it's granted, hotkeys register but the commands they run do nothing.
-`just install` prints that reminder. `just uninstall` removes both.
+There is **one bundle**: `/Applications/Mur.app`, `com.mur.MurApp`, local
+and released alike. `build-debug.sh` only leaves the products in `.debug/`
+(`MurApp`, `mur`); the old `.debug/MurApp.app` (`bobko.aerospace.debug`,
+signed ad hoc) was a second app with a second grant, lost at every
+rebuild, and is gone. Until the grant exists, hotkeys register but the
+commands they run do nothing. `just uninstall` removes the app and the CLI.
 
 **A missing grant looks exactly like a broken layout engine.** With no
 Accessibility, `mur list-windows --all` prints nothing, no window ever
@@ -384,19 +385,20 @@ from a terminal inherits *that terminal's* grant, so the same build works
 from the shell and is dead when launched from Finder or launchd.
 
 An ad-hoc signature has no stable designated requirement, so TCC keys the
-grant to the binary's cdhash and **every `just install` revokes it**. So
-`install-app.sh` signs with `mur-dev` (or `MUR_CODESIGN_IDENTITY`), a leaf
-issued by the homelab code-signing CA on n5, and gives the bundle the
-**cask's own designated requirement**: `identifier "com.mur.MurApp" and
-certificate root = H"<CA root>"` (slipway/src/desktop.rs). A local install
-and a depot release are then the same app to TCC, and one grant covers
-both. A leaf with codesign's default requirement (`certificate leaf = …`)
-would survive rebuilds but lose the grant at every switch between a local
-build and `depot sync`. To issue `mur-dev` on another Mac: make an RSA key
-and CSR there, sign it on n5 as `slipway` with
-`~/.local/share/slipway/codesign/{root,ca-key}.pem` and the extensions of
-`slipway-codesign-issue` (ansible/roles/slipway/tasks/codesign.yml), and
-import key + leaf into the login keychain with `-T /usr/bin/codesign`.
+grant to the binary's cdhash and every install would revoke it. So
+`script/sign-app.sh` (called by `install-app.sh`) signs with `mur-dev` (or
+`MUR_CODESIGN_IDENTITY`), a leaf issued by the homelab code-signing CA on
+n5, and gives the bundle the **cask's own designated requirement**:
+`identifier "com.mur.MurApp" and certificate root = H"<CA root>"`
+(slipway/src/desktop.rs). A local install and a depot release are then the
+same app to TCC, and one grant covers both. A leaf with codesign's default
+requirement (`certificate leaf = …`) would survive rebuilds but lose the
+grant at every switch between a local build and `depot sync`.
+`just cert` (`script/issue-dev-cert.sh`) issues `mur-dev` on a new Mac, or
+renews it: the key is made locally and n5 only signs the CSR (sudo there,
+through the askpass dialog). It is good for 825 days; `sign-app.sh` warns
+in the last 30. A renewed leaf keeps the grant, since the requirement names
+the root.
 
 When mur is untrusted the menu-bar item reads
 `⚠️ mur: grant Accessibility` instead of the workspace list
@@ -415,9 +417,10 @@ another one, and the nested run loop `terminate` spins never drains the main
 queue from inside a main-queue block: mur hangs in `terminate`. Use
 `terminateApp()`, which calls it from a run-loop block.
 
-The Accessibility list can show both **Mur** (`/Applications/Mur.app`,
-`com.mur.MurApp`) and **MurApp** (`.debug/MurApp.app`,
-`bobko.aerospace.debug`): separate bundles, separate grants.
+A **MurApp** entry in the Accessibility list is the old debug bundle
+(`bobko.aerospace.debug`): remove it with the minus button in System
+Settings → Privacy & Security → Accessibility (`tccutil` can't name a
+bundle id once the bundle is gone).
 
 ## Hidden windows come back when mur stops (`HiddenWindows.swift`)
 
@@ -445,24 +448,17 @@ in parallel, so one wedged app can't hold up the quit. (AeroSpace's version
 moved *every* window to the screen centre at its last floating size, and
 the first failing AX call aborted the loop.)
 
-## Restarting the daemon after a debug build
+## Restarting the daemon after a build
 
-After `bash build-debug.sh`, restart the running daemon by killing it and
-relaunching the binary directly with `nohup` + `disown` — **not** with
-`open <bundle>`. Launching via `open` (or any path that keeps the app
-attached to the invoking shell session) breaks global hotkey registration:
-the keybindings appear active but never fire.
-
-```bash
-pkill -f "MurApp.app/Contents/MacOS/MurApp" 2>/dev/null
-sleep 1
-(nohup /Users/leochl/workspace/mur/.debug/MurApp.app/Contents/MacOS/MurApp \
-    >/tmp/mur.log 2>&1 &)
-disown 2>/dev/null
-```
-
-The subshell + `disown` detach the process from the shell so hotkey
-registration survives the launching session exiting.
+`just install` builds, bundles, signs and restarts; `just restart` only
+restarts. Both launch the app detached with `nohup` in a new session
+(`just start`) — **not** with `open <bundle>` or a plain background job of
+the shell: a path that keeps the app attached to the invoking shell session
+breaks global hotkey registration, and the keybindings appear active but
+never fire.
+`run-debug.sh` runs the bare `.debug/MurApp` in the foreground, borrowing
+the terminal's Accessibility grant: fine for a quick look, never for the
+daemon you use.
 
 ## No restart wrapper — mur handles its own failures
 

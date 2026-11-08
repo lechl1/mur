@@ -8,36 +8,10 @@ source ./script/setup.sh
 swift build "$@"
 swift build --target AppBundleTests "$@" # swift build doesn't build test targets by default :(
 
-# mur — preserve .debug/MurApp.app across rebuilds so the macOS
-# Accessibility grant doesn't get torn down every iteration. The bundle
-# id `bobko.aerospace.debug` plus a stable wrapper structure means
-# Accessibility only needs to be re-granted when the binary signature
-# actually changes (and only that, not on every clean wipe).
+# The products, where install-app.sh (`just install`) makes Mur.app of them.
+# There is no separate debug bundle: it had its own bundle id and an ad-hoc
+# signature, so its own Accessibility grant, lost at every rebuild.
 mkdir -p .debug
+rm -rf .debug/MurApp.app
 cp .build/debug/mur .debug/mur
-
-mkdir -p .debug/MurApp.app/Contents/MacOS
-cp .build/debug/MurApp .debug/MurApp.app/Contents/MacOS/MurApp
-if ! test -f .debug/MurApp.app/Contents/Info.plist; then
-    cat > .debug/MurApp.app/Contents/Info.plist <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>          <string>MurApp</string>
-    <key>CFBundleIdentifier</key>          <string>bobko.aerospace.debug</string>
-    <key>CFBundleName</key>                <string>MurApp</string>
-    <key>CFBundleDisplayName</key>         <string>mur (debug)</string>
-    <key>CFBundleShortVersionString</key>  <string>0.0.0-SNAPSHOT</string>
-    <key>CFBundleVersion</key>             <string>0.0.0</string>
-    <key>CFBundlePackageType</key>         <string>APPL</string>
-    <key>LSMinimumSystemVersion</key>      <string>13.0</string>
-    <key>LSUIElement</key>                 <true/>
-    <key>NSPrincipalClass</key>            <string>NSApplication</string>
-    <key>NSHighResolutionCapable</key>     <true/>
-    <key>NSAppleEventsUsageDescription</key> <string>save-layout asks your browser which page each window shows, so the layout template can reopen it.</string>
-</dict>
-</plist>
-EOF
-fi
-codesign --force --deep --sign - .debug/MurApp.app > /dev/null 2>&1 || true
+cp .build/debug/MurApp .debug/MurApp

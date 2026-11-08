@@ -3,9 +3,7 @@
 
 set shell := ["bash", "-uc"]
 
-# Built debug artifacts (see build-debug.sh).
-app    := justfile_directory() / ".debug/MurApp.app"
-binary := app / "Contents/MacOS/MurApp"
+# Built debug artifacts (see build-debug.sh); `just install` bundles them.
 cli    := justfile_directory() / ".debug/mur"
 
 # Where `just install` puts things. The app goes to /Applications so it
@@ -48,8 +46,7 @@ install: build stop
     ln -sf "{{installed_cli}}" "{{prefix}}/bin/mur"
     @just start
     @echo "✅ Installed {{installed_app}} + {{prefix}}/bin/mur (logs: {{log}})"
-    @echo "   Launchable from Finder/Spotlight. First launch from there needs its own"
-    @echo "   Accessibility grant: System Settings → Privacy & Security → Accessibility → Mur."
+    @echo "   Signed like the depot cask (script/sign-app.sh): it keeps the Accessibility grant."
 
 # Remove the installed app and the CLI symlink, and stop the daemon.
 uninstall: stop
@@ -61,21 +58,28 @@ uninstall: stop
 # nohup alone only ignores SIGHUP and leaves the process on the shell's tty
 # and session, which breaks hotkey registration. macOS has no `setsid`, so
 # perl starts a new session (no controlling tty) before exec'ing the app.
-# Runs the installed app if there is one, otherwise the debug bundle.
+# Runs the installed app: the only bundle, so the only one with a grant.
 start:
     #!/usr/bin/env bash
     set -uo pipefail
-    if test -x "{{installed_binary}}"; then bin="{{installed_binary}}"; else bin="{{binary}}"; fi
+    bin="{{installed_binary}}"
+    test -x "$bin" || { echo "error: $bin is not installed: run 'just install'" >&2; exit 1; }
     (nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' -- "$bin" </dev/null >"{{log}}" 2>&1 &) ; disown 2>/dev/null || true
     echo "▶  Started $bin — logs at {{log}}"
 
 # Restart the daemon.
 restart: stop start
 
-# Stop the running daemon (installed or debug — the pattern matches both).
+# Stop the running daemon (the installed app, a run-debug.sh binary, or an
+# old `.debug/MurApp.app`).
 stop:
-    -pkill -f "Mur(App)?\.app/Contents/MacOS/MurApp"
+    -pkill -f "(Mur(App)?\.app/Contents/MacOS|\.debug)/MurApp"
     @sleep 1
+
+# Issue or renew `mur-dev`, the homelab-CA identity local installs are signed
+# with, so they share the cask's Accessibility grant (script/issue-dev-cert.sh).
+cert *args:
+    bash script/issue-dev-cert.sh {{args}}
 
 # Follow the daemon log.
 logs:
