@@ -151,10 +151,16 @@ func runLightSession<T>(
             if let nativeFocused { try await debugWindowsIfRecording(nativeFocused) }
             updateFocusCache(nativeFocused)
             let focusBefore = focus.windowOrNil
+            let placementsBefore = currentPlacements()
 
             refreshModel()
             let result = try await body()
             refreshModel()
+            if isRestoringWindowState,
+               movedByUser(event, before: placementsBefore, after: currentPlacements())
+            {
+                endRestoreMode()
+            }
 
             let focusAfter = focus.windowOrNil
 
@@ -267,9 +273,9 @@ enum OptimalHideCorner {
 /// `persistWindowStateSoon`. A restart then restores where windows REALLY were.
 @MainActor private var lastPersistedPlacements: [WindowId: String] = [:]
 
+/// Where every window is now: workspace, column and row, or floating.
 @MainActor
-private func persistIfPlacementsChanged() {
-    if isRestoringWindowState { return }
+func currentPlacements() -> [WindowId: String] {
     var current: [WindowId: String] = [:]
     for workspace in Workspace.all {
         for (windowId, span) in workspace.stackingLayout.placements {
@@ -279,6 +285,13 @@ private func persistIfPlacementsChanged() {
             current[window.windowId] = "\(workspace.name):floating"
         }
     }
+    return current
+}
+
+@MainActor
+private func persistIfPlacementsChanged() {
+    if isRestoringWindowState { return }
+    let current = currentPlacements()
     if current == lastPersistedPlacements { return }
     lastPersistedPlacements = current
     persistWindowStateSoon()

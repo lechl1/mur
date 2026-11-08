@@ -602,6 +602,28 @@ var isRestoringWindowState: Bool {
     return unclaimedRestoreEntries > 0 && Date.now < deadline
 }
 
+/// mur — the user moved a window while restore mode was on: they have taken
+/// over the screen, so restore mode ends and the move is saved like any
+/// other. Restore mode keeps the saved arrangement from being overwritten
+/// by a half-restored screen, and it lasts up to `restoreSettle` — so it
+/// also dropped every move made in that minute, and the next restart put
+/// those windows back where they had been. No-op before the first restore.
+@MainActor
+func endRestoreMode() {
+    guard restoreModeDeadline != nil else { return }
+    unclaimedRestoreEntries = 0
+}
+
+/// Whether a session moved a window on the user's behalf: one they started
+/// (hotkey, menu, CLI) that changed where a window is. A refresh macOS
+/// started, or a command that only asked, moves nothing of theirs.
+func movedByUser(_ event: RefreshSessionEvent, before: [WindowId: String], after: [WindowId: String]) -> Bool {
+    switch event {
+        case .hotkeyBinding, .menuBarButton, .socketServer: before != after
+        default: false
+    }
+}
+
 // MARK: - Persisting window state
 
 /// mur — persist EVERYTHING mur needs to rebuild this screen after a
@@ -643,6 +665,17 @@ func persistWindowStateAfterOpen() {
             await persistWindowStateNow()
         }
     }
+}
+
+/// Before mur quits: save the screen now. The debounced save of a move made
+/// just before (400ms), or the ladder after a window opened (up to 15s),
+/// would otherwise die with the process. Not while restore mode is on: the
+/// screen is still half-restored.
+@MainActor
+func persistWindowStateBeforeQuit() async {
+    persistWindowStateTask?.cancel()
+    if isRestoringWindowState { return }
+    await persistWindowStateNow()
 }
 
 @MainActor

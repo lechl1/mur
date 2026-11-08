@@ -75,7 +75,9 @@ enum GlobalObserver {
                     commitStackingDrop(session)
                     // mur — a mouse drag/resize just changed the layout;
                     // persist the new state (all windows, plus terminal
-                    // sessions) the same way a keyboard move does.
+                    // sessions) the same way a keyboard move does — even
+                    // in the minute restore mode lasts.
+                    endRestoreMode()
                     persistWindowStateSoon()
                 }
                 // mur — `try?`, not `try`: this used to be able to throw

@@ -263,6 +263,11 @@ already existed — but not the ones mur is *waiting* for: a terminal mur
 relaunches takes seconds to map, a browser reopening tabs longer. So
 restore mode stays on for `restoreSettle` (60s) and ends early once every
 remembered window has been claimed (`unclaimedRestoreEntries`).
+Nothing is saved while it lasts, so a move the user makes then — hotkey,
+menu, CLI, drag (`movedByUser`) — ends it (`endRestoreMode`) and is saved
+like any other; otherwise the next restart undid it. Quitting saves the
+screen first (`persistWindowStateBeforeQuit`): a debounced save still
+pending died with the process.
 
 **Windows macOS reopened at login are restored too** (`LoginRestore.swift`).
 With "Reopen windows when logging back in", loginwindow relaunches the last

@@ -24,6 +24,7 @@ func initTerminationHandler() {
 private struct AppServerTerminationHandler: TerminationHandler {
     func beforeTermination() async throws {
         if await MainActor.run(body: { terminationCleanupDone }) { return }
+        await persistWindowStateBeforeQuit()
         await bringParkedWindowsBack()
         await MainActor.run { terminationCleanupDone = true }
         await toggleReleaseServerIfDebug(.on)
