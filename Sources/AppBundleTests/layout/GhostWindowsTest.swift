@@ -47,6 +47,19 @@ final class GhostWindowsTest: XCTestCase {
         XCTAssertNil(a.stackingLayout.placements[1])
     }
 
+    func testTheRestoreLeavesAGhostOutOfTheGrid() {
+        // The restore re-tiles every window it handles: a ghost it handled
+        // took a row back, and the window beside it filled half its column.
+        let a = Workspace.get(byName: "a")
+        TestWindow.new(id: 1, parent: a.rootTilingContainer)
+        TestWindow.new(id: 2, parent: a.rootTilingContainer)
+        a.stackingLayout.place(1, at: .single(lane: 0, slot: 0))
+        a.stackingLayout.place(2, at: .single(lane: 0, slot: 1))
+        applyGhostWindows([2])
+
+        assertEquals(windowsToRestore([1, 2]), [1])
+    }
+
     func testWhatCountsAsAGhost() {
         XCTAssertTrue(isGhostFrame(alpha: 0, size: CGSize(width: 800, height: 600)))
         XCTAssertTrue(isGhostFrame(alpha: 1, size: .zero))

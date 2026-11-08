@@ -271,6 +271,17 @@ func restoreWindowStateOnRegister(_ window: Window) {
     }
 }
 
+/// The pending windows the coordinated restore may put in the grid: not the
+/// ones nobody can see (`ghostWindowIds`). The refresh that registered them
+/// has already parked those out of their tile, and the restore re-tiles
+/// every window it handles — a window drawn transparent or 0×0 (Dimify's
+/// closed settings window) then held a row, and the window it shared the
+/// column with filled only half of it.
+@MainActor
+func windowsToRestore(_ pending: Set<WindowId>) -> Set<WindowId> {
+    pending.subtracting(ghostWindowIds)
+}
+
 /// Rebuild the grid for every pending window from `WindowMemory`, preserving
 /// each column's relative row order. For each destination workspace the
 /// tiled windows are grouped by their stored lane, the distinct lanes are
@@ -280,7 +291,7 @@ func restoreWindowStateOnRegister(_ window: Window) {
 /// (no memory) keep their heuristic placement, remembered by real title.
 @MainActor
 private func runCoordinatedRestore() async {
-    let ids = pendingRestoreIds
+    let ids = windowsToRestore(pendingRestoreIds)
     pendingRestoreIds = []
 
     // mur — RESTORE IS A WINDOW OF TIME, NOT ONE BATCH (naru's

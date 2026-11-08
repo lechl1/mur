@@ -483,6 +483,19 @@ struct StackingLayoutTest {
         #expect(abs(layout.laneWeight(lane: 1) - 0.4) < 0.001)
     }
 
+    @Test func theWindowLeftInAColumnFillsIt() {
+        // A closed row leaves nothing behind: the window left in its column
+        // gets the column's whole height, not the half it had.
+        let layout = StackingLayout(shape: .landscapeDefault)
+        layout.place(1, at: .single(lane: 0, slot: 0))
+        layout.place(2, at: .single(lane: 0, slot: 1))
+        layout.remove(1)
+        let r = layout.resolveRect(for: 2, in: landscapeAvail, innerGap: 0)
+        #expect(layout.placements[2] == .single(lane: 0, slot: 0))
+        #expect(abs((r?.topLeftY ?? -1) - 0) < 0.001)
+        #expect(abs((r?.height ?? 0) - 600) < 0.001)
+    }
+
     // MARK: a window back from hide / minimize / fullscreen goes back where it was
 
     @Test func unparkedRowGoesBackUnderTheWindowAboveIt() {
