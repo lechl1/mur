@@ -47,12 +47,16 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   `laneExtents` too, never from the raw weights, so it matches the screen.
 - **Resizing a column trades with the others.** Shrinking a column grows the
   other columns and growing one shrinks them, in proportion to their widths,
-  so the strip keeps its total (`StackingResize.setLaneWidth`, shared by the
-  mouse drag `snap` and the keys `resizeLaneWidth`). Every column keeps at
+  so the strip FILLS the screen (`StackingResize.setLaneWidth`, shared by the
+  mouse drag `snap` and the keys `resizeLaneWidth`): the others take what is
+  left of the whole axis, so a centred strip narrower than the screen (two
+  default 0.4 columns) fills it on the first resize. Every column keeps at
   least `minLaneWidth`. Only a lone column, with no one to trade with, changes
-  its own width and is re-centred. Rows already worked this way. An earlier
-  "resize-towards-center" rule, where the neighbours kept their widths and the
-  strip re-centred, left a shrunk column's room empty.
+  its own width and is re-centred. Rows already worked this way. Two earlier
+  rules were wrong: "resize-towards-center", where the neighbours kept their
+  widths and the strip re-centred, left a shrunk column's room empty; and
+  "the strip keeps its total" left a 0.8 strip 0.8 wide for good, the windows
+  never reaching the screen's edges.
 - **A closing column's space goes back to the survivors, which then FILL
   the screen.** When the last window in a column goes away, the remaining
   columns scale up **proportionally** until they cover the whole lane axis:

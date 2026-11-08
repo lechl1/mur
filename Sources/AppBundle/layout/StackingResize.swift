@@ -137,7 +137,7 @@ enum StackingResize {
         // The dragged column's new width comes from its new rendered
         // extent; what it gains or loses the other used columns give or
         // take, in proportion to their widths (`setLaneWidth`), so the
-        // strip keeps its total. A lone column has no one to trade with:
+        // strip fills the screen. A lone column has no one to trade with:
         // it takes the width outright and fit-or-center re-centres it.
         var resultLaneWeights: [CGFloat]? = nil
         if (laneLow || laneHigh), sample.layout.usedLanes.contains(span.lane0) {
@@ -170,11 +170,13 @@ enum StackingResize {
     /// Give `lanes` (one column, possibly spanning several lanes) the
     /// rendered `width`, a fraction of the lane axis. Used lanes are first
     /// snapshotted at their rendered fractions (`w / max(1, total)`), so
-    /// nothing jumps. The other used columns then absorb the difference in
-    /// proportion to their widths: shrinking one grows the others, growing
-    /// one shrinks them, and the strip's total stays put. Every column is
-    /// floored at `minLaneWidth`. With no other column (a lone one), the
-    /// width is taken outright, capped at the full axis.
+    /// nothing jumps. The other used columns then take what is left of the
+    /// whole axis, in proportion to their widths: shrinking one grows the
+    /// others, growing one shrinks them, and the strip fills the screen
+    /// edge to edge — a centred strip narrower than the screen fills it on
+    /// the first resize. Every column is floored at `minLaneWidth`. With no
+    /// other column (a lone one), the width is taken outright, capped at
+    /// the full axis.
     static func setLaneWidth(_ weights: inout [CGFloat], used: [Int], lanes: ClosedRange<Int>, width: CGFloat) {
         let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
         let denom = max(1.0, usedTotal)
@@ -188,7 +190,7 @@ enum StackingResize {
             for l in span { weights[l] = perLane }
             return
         }
-        let total = used.reduce(0.0) { $0 + weights[$1] }
+        let total: CGFloat = 1
         let othersTotal = others.reduce(0.0) { $0 + weights[$1] }
         let floor = minLaneWidth * CGFloat(others.count)
         let newSpan = max(minLaneWidth * count, min(total - floor, width))

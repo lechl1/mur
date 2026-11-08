@@ -29,10 +29,10 @@ struct StackingResizeTest {
     }
 
     @Test func landscapeRightDragGrowsCurrentLaneAndShrinksTheOther() {
-        // 6-lane grid; 2 used lanes at the default 0.4 (a 0.8 strip).
+        // 6-lane grid; 2 used lanes at the default 0.4 (a centred 0.8 strip).
         // Dragging col 0's right edge gives it its new rendered extent
-        // (600/900 = 0.667); col 1 gives up the difference, so the strip
-        // stays 0.8. Unused lanes keep the default column width (0.4).
+        // (600/900 = 0.667); col 1 takes the rest of the screen, so the
+        // strip now fills it. Unused lanes keep the default column width (0.4).
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
@@ -46,7 +46,7 @@ struct StackingResizeTest {
         let lw = result?.laneWeights ?? []
         #expect(lw.count == 6)
         #expect(abs(lw[0] - 0.6667) < 0.01)   // 600 / 900
-        #expect(abs(lw[1] - 0.1333) < 0.01)   // 0.8 − 0.667
+        #expect(abs(lw[1] - 0.3333) < 0.01)   // 1 − 0.667
         for unused in 2 ..< 6 { #expect(abs(lw[unused] - 0.4) < 0.01) }
         #expect(result?.slotLane == nil)
     }
@@ -107,7 +107,7 @@ struct StackingResizeTest {
         #expect(lw.count == 6)
         // Portrait lane axis = Y. New extent 600 / usable 900 = 0.667.
         #expect(abs(lw[0] - 0.6667) < 0.01)
-        #expect(abs(lw[1] - 0.1333) < 0.01)   // the other row gives up the difference
+        #expect(abs(lw[1] - 0.3333) < 0.01)   // the other row takes the rest
     }
 
     // MARK: lane-axis drag distributes across ALL lanes on the other side

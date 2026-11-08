@@ -115,6 +115,22 @@ struct StackingResizeStepTest {
         #expect(abs(layout.laneWeight(lane: 1) - 0.4) < 1e-6)
     }
 
+    @Test func resizingACentredStripFillsTheScreen() {
+        // Two default 0.4 columns render as a centred 0.8 strip. One key
+        // press on either side makes the pair reach both edges.
+        for signum in [-1, +1] {
+            let layout = StackingLayout(shape: .landscapeDefault)
+            layout.place(1, at: .soleSlot(lane: 0))
+            layout.place(2, at: .soleSlot(lane: 1))
+            layout.setLaneAbsoluteWidth(0.4, lane: 0)
+            layout.setLaneAbsoluteWidth(0.4, lane: 1)
+            StackingResize.resizeLaneWidth(layout: layout, lane: 0, signum: signum)
+            let w0 = layout.laneWeight(lane: 0)
+            #expect(abs(w0 - (0.4 + Double(signum) * 0.1)) < 1e-6)
+            #expect(abs(w0 + layout.laneWeight(lane: 1) - 1) < 1e-6)
+        }
+    }
+
     @Test func aLoneColumnResizesByKeyOnItsOwn() {
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))

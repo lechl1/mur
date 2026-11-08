@@ -14,7 +14,7 @@ import Foundation
 /// Positional: the arrow pointing towards the centre of the grid grows,
 /// the opposite shrinks. On the COLUMN (lane) axis the other columns give
 /// or take the difference in proportion (`resizeLaneWidth`), so the strip
-/// keeps its total. The ROW (slot) axis, which fills the column, walks the
+/// fills the screen. The ROW (slot) axis, which fills the column, walks the
 /// discrete fraction ladder (1/16 ↔ 1/2 ↔ 15/16), redistributing among the
 /// other rows.
 struct StackingResizeCommand: Command {
@@ -202,7 +202,7 @@ extension StackingResize {
     /// by `step` (a fraction of the lane axis), the same path the mouse
     /// resize takes (`setLaneWidth`): the other columns give or take the
     /// difference in proportion, so shrinking one grows the others and
-    /// the strip keeps its total. A lone column changes on its own,
+    /// the strip fills the screen. A lone column changes on its own,
     /// clamped to `[0.1, 1.0]`, and fit-or-center re-centres it.
     static func resizeLaneWidth(layout: StackingLayout, lane: Int, signum: Int, step: CGFloat = 0.1) {
         let used = layout.usedLanes

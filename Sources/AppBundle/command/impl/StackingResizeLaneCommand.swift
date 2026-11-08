@@ -11,7 +11,7 @@ import Foundation
 /// The other columns give or take the difference in proportion to their
 /// widths (`resizeLaneWidth`, the same path the mouse resize takes): a
 /// column that shrinks grows the others, one that grows shrinks them, and
-/// the strip keeps its total. The slot axis (rows within a column) is
+/// the strip fills the screen. The slot axis (rows within a column) is
 /// untouched — that stays on `stacking-resize up/down`.
 struct StackingResizeLaneCommand: Command {
     let args: StackingResizeLaneCmdArgs
