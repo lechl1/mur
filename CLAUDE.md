@@ -74,6 +74,16 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   width", then "survivors preserve the total" (which left a 0.4-wide strip
   0.4 wide, the visible bug). Losing one ROW of a multi-row column still
   changes nothing: only a column closing redistributes.
+- **A window opens on its parent process's workspace.** A window that
+  opens while mur runs goes to the workspace of the nearest ancestor
+  process owning a window mur manages (`workspaceOfParentProcess`, walking
+  `sysctl`'s parent pids up to launchd), not to whichever workspace has
+  focus by then: `just dev` in a terminal on workspace 2 opens its app on 2.
+  The app's own windows don't count, and an ancestor on several workspaces
+  picks the one it last had focus on (`lastFocusedWorkspaceNameByPid`).
+  Without a windowed ancestor (Dock, Finder, `open`: their parent is
+  launchd) the focused workspace stays the default. The startup scan still
+  places by where the window already is.
 - **A column opening beside a FULL screen takes an equal share.** If the
   existing columns already fill the lane axis (total ≥ 1), a newcomer gets
   their average width (`StackingLayout.widthForNewColumn`), so it renders

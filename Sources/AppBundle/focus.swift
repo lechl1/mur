@@ -72,6 +72,9 @@ private struct FrozenFocus: AeroAny, Equatable, Sendable {
     let status = newFocus.workspace.workspaceMonitor.setActiveWorkspace(newFocus.workspace)
 
     newFocus.windowOrNil?.markAsMostRecentChild()
+    if let window = newFocus.windowOrNil {
+        lastFocusedWorkspaceNameByPid[window.app.pid] = newFocus.workspace.name
+    }
     return status
 }
 extension Window {

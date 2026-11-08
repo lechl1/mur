@@ -24,7 +24,8 @@ final class MacWindow: Window {
             macApp,
             isStartup
                 ? (rect?.center.monitorApproximation ?? mainMonitor).activeWorkspace
-                : focus.workspace,
+                // mur — on the workspace of the process that started it.
+                : workspaceOfParentProcess(of: macApp.pid) ?? focus.workspace,
             window: nil,
         )
 
