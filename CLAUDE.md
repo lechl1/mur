@@ -275,6 +275,17 @@ workspace — a window the user opens joins the workspace it opened on
 window that opened after the startup batch is steered only on a match that
 names it (title / terminal session), never on the app-pool guess.
 
+**A relaunched app's windows go back to their workspaces**
+(`RelaunchedApps.swift`). `depot` quits an app it replaces and reopens it
+with `open <bundle>`: the new process's parent is launchd, so every window
+used to land on the focused workspace. mur records when each app quits
+(`MacApp.destroy`); a window that app opens within `relaunchWindow` (10
+min) registers on the workspace of its ghost in the arrangement
+(`ArrangementStore.ghostWorkspace`): the ghost with the same title, else
+the app's ghosts if they're all on one workspace. Only then is a window
+steered outside restore mode. An app that quit long ago still opens where
+the user is.
+
 **Restore is a window of time, not one batch** (naru's `RESTORE_SETTLE`).
 The coordinated restore is debounced 90ms, which catches every window that
 already existed — but not the ones mur is *waiting* for: a terminal mur

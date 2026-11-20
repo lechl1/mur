@@ -385,7 +385,11 @@ final class MacApp: AbstractApp {
     }
 
     private func destroy() async {
-        _ = await Task { @MainActor [pid] in _ = MacApp.allAppsMap.removeValue(forKey: pid) }.result
+        // mur — its windows go back to their workspaces if it reopens soon.
+        _ = await Task { @MainActor [pid, rawAppBundleId] in
+            _ = MacApp.allAppsMap.removeValue(forKey: pid)
+            if let rawAppBundleId { relaunchedApps.noteTerminated(rawAppBundleId) }
+        }.result
         for (_, job) in setFrameJobs {
             job.cancel()
         }

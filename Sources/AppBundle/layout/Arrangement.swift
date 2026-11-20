@@ -222,6 +222,27 @@ final class ArrangementStore {
         return found.cell
     }
 
+    /// The workspace a window of `appId` titled `title` had before its app
+    /// quit — see `workspaceOfRelaunchedApp`. Only ghosts count: an entry
+    /// whose window is still placed is somebody else. The ghost with the
+    /// same title wins; without one (an app whose window has no title yet)
+    /// the app's ghosts decide if they're all on one workspace.
+    func ghostWorkspace(appId: String, title: String, isPlaced: (WindowId) -> Bool) -> String? {
+        var ghosts: [(workspace: String, title: String)] = []
+        for ws in workspaces.keys.sorted() {
+            let columns = workspaces[ws] ?? []
+            let ids = liveIds[ws] ?? [:]
+            for p in Arrangement.paths(columns) {
+                let w = columns[p.column].windows[p.row]
+                guard w.appId == appId, !(ids[p].map(isPlaced) ?? false) else { continue }
+                ghosts.append((ws, w.title))
+            }
+        }
+        if !title.isEmpty, let hit = ghosts.first(where: { $0.title == title }) { return hit.workspace }
+        let names = Set(ghosts.map(\.workspace))
+        return names.count == 1 ? names.first : nil
+    }
+
     /// The restore's lookup: the saved entry for this window, across all
     /// workspaces (sorted, so it's stable). Same identity first; for a
     /// terminal the same cwd next; then any entry of the app (`isAppGuess`).

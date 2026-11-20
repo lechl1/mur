@@ -19,15 +19,17 @@ final class MacWindow: Window {
     static func getOrRegister(windowId: UInt32, macApp: MacApp) async throws -> MacWindow {
         if let existing = allWindowsMap[windowId] { return existing }
         let rect = try await macApp.getAxRect(windowId)
-        let data = try await unbindAndGetBindingDataForNewWindow(
-            windowId,
-            macApp,
-            isStartup
-                ? (rect?.center.monitorApproximation ?? mainMonitor).activeWorkspace
-                // mur — on the workspace of the process that started it.
-                : workspaceOfParentProcess(of: macApp.pid) ?? focus.workspace,
-            window: nil,
-        )
+        let workspace: Workspace = if isStartup {
+            (rect?.center.monitorApproximation ?? mainMonitor).activeWorkspace
+        } else if let back = await workspaceOfRelaunchedApp(macApp, windowId: windowId) {
+            // mur — an app that just quit and reopened (a depot update):
+            // back on the workspace it was on.
+            back
+        } else {
+            // mur — on the workspace of the process that started it.
+            workspaceOfParentProcess(of: macApp.pid) ?? focus.workspace
+        }
+        let data = try await unbindAndGetBindingDataForNewWindow(windowId, macApp, workspace, window: nil)
 
         // atomic synchronous section
         if let existing = allWindowsMap[windowId] { return existing }

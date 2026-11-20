@@ -108,4 +108,48 @@ struct ArrangementTest {
         #expect(reloaded.claim(w("creeper", "lab.home.creeper"))?.width == 0.7)
         #expect(reloaded.claim(w("a"))?.width == 0.4)
     }
+
+    /// depot quits an app to replace it and reopens it: each window goes
+    /// back to the workspace its ghost is on, found by its title.
+    @Test func aRelaunchedWindowFindsItsWorkspaceByTitle() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mur-arr-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ArrangementStore(url: url)
+        store.update(
+            live: ["2": [col(w("inbox", "mail"))], "5": [col(w("drafts", "mail"), w("x"))]],
+            ids: ["2": [[1]], "5": [[2, 3]]],
+            restoring: false,
+        )
+        // The app quit: windows 1 and 2 are gone, 3 is still placed.
+        let live: (WindowId) -> Bool = { $0 == 3 }
+        #expect(store.ghostWorkspace(appId: "mail", title: "drafts", isPlaced: live) == "5")
+        #expect(store.ghostWorkspace(appId: "mail", title: "inbox", isPlaced: live) == "2")
+        // No title yet and ghosts on two workspaces: nothing to go by.
+        #expect(store.ghostWorkspace(appId: "mail", title: "", isPlaced: live) == nil)
+        // A window that is still open is no ghost.
+        #expect(store.ghostWorkspace(appId: "app", title: "x", isPlaced: live) == nil)
+    }
+
+    @Test func aRelaunchedAppWithItsGhostsOnOneWorkspaceGoesThere() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mur-arr-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ArrangementStore(url: url)
+        store.update(live: ["3": [col(w("Spotify Premium", "spotify"))]], ids: ["3": [[1]]], restoring: false)
+        #expect(store.ghostWorkspace(appId: "spotify", title: "", isPlaced: { _ in false }) == "3")
+        #expect(store.ghostWorkspace(appId: "spotify", title: "renamed", isPlaced: { _ in false }) == "3")
+    }
+}
+
+@Suite("RelaunchedApps")
+@MainActor
+struct RelaunchedAppsTest {
+    @Test func onlyAnAppThatJustQuitIsARelaunch() {
+        var apps = RelaunchedApps()
+        let quit = Date(timeIntervalSince1970: 1_000_000)
+        #expect(!apps.isRelaunch("mail", at: quit))
+        apps.noteTerminated("mail", at: quit)
+        #expect(apps.isRelaunch("mail", at: quit.addingTimeInterval(30)))
+        #expect(!apps.isRelaunch("mail", at: quit.addingTimeInterval(RelaunchedApps.relaunchWindow + 1)))
+        #expect(!apps.isRelaunch("other", at: quit.addingTimeInterval(30)))
+    }
 }
