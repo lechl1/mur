@@ -35,7 +35,6 @@ final class MacWindow: Window {
         if let existing = allWindowsMap[windowId] { return existing }
         let window = MacWindow(windowId, macApp, lastFloatingSize: rect?.size, parent: data.parent, adaptiveWeight: data.adaptiveWeight, index: data.index)
         allWindowsMap[windowId] = window
-        FocusStack.windowRegistered(windowId)
         // mur — a window a mur that didn't clean up left parked off screen.
         if isStartup { reclaimParkedWindow(window, rect: rect) }
 
@@ -94,9 +93,7 @@ final class MacWindow: Window {
         if MacWindow.allWindowsMap.removeValue(forKey: windowId) == nil {
             return
         }
-        // mur — focus pops back to where it came from (popFocusAfterClose),
-        // not to this workspace's most recent window.
-        let popsFocus = FocusStack.windowDied(windowId)
+        focusStack.remove(windowId) // mur — see FocusStack
         // mur — drop the dead window from any workspace's stackingLayout
         // so `compactGaps()` runs and the freed lane / slot collapses.
         if config.experimentalStackingLayout {
@@ -115,7 +112,7 @@ final class MacWindow: Window {
         let parent = unbindFromParent().parent
         let deadWindowWorkspace = parent.nodeWorkspace
         let focus = focus
-        if !popsFocus, let deadWindowWorkspace, deadWindowWorkspace == focus.workspace ||
+        if let deadWindowWorkspace, deadWindowWorkspace == focus.workspace ||
             deadWindowWorkspace == prevFocusedWorkspace && prevFocusedWorkspaceDate.distance(to: .now) < 1
         {
             switch parent.cases {

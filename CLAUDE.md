@@ -241,27 +241,24 @@ delivered to a dying window's own element is unreliable — for some apps it
 never arrives, and the close then went unnoticed until an unrelated event
 woke mur up.
 
-## Focus pops back when a window closes (`FocusStack.swift`)
+## Going back to the previous window (`FocusStack.swift`)
 
 mur keeps a **focus stack**: every window it focuses (`setFocus`) goes to
-the top. When the focused window closes or its app quits, focus goes to the
-window that had it before, on whichever workspace that is
-(`popFocusAfterClose`, run once after each batch of garbage-collected
-windows, so an app quitting with several windows never hands focus to one
-of its own dying windows). It used to go to the closed window's workspace's
-most recent window, or to whatever macOS picked.
+the top, and a closed window just drops out. **A close never moves focus by
+itself**: focus goes where macOS and the closed window's workspace put it,
+as in AeroSpace. Going back is the user's call: `focus-back-and-forth`
+focuses the most recent window that still exists, other than the focused
+one, on whichever workspace it is. After a close that is the window before
+the closed one; pressed again, it flips back. Minimized and hidden windows
+are skipped but stay in the stack. AeroSpace's version kept ONE previous
+focus and failed once that window had closed.
 
-macOS moves focus first (the app's next window, the next app), and mur
-follows it (`updateFocusCache`) before it notices the close. So every
-native focus move records the stack as it was (`noteNativeSwitch`); when
-the window focus left dies within `FocusStack.fallbackWindow` (2s), that
-move was macOS's fallback and the stack is rolled back to the snapshot. A
-window that opened within that time keeps the focus it was given: that is
-a splash or a dialog handing over to the app's main window. A background
-window closing changes nothing. Minimized and hidden windows are skipped
-but stay in the stack. Moving a window to another workspace without
-`--focus-follows-window` focuses that workspace's next window, and that
-counts as a focus.
+Two earlier designs were wrong. Popping automatically to the previous window
+on every close (#28) moved focus at another program's whim: macOS can't tell
+a window the user closed from one another process closed (depot quitting an
+app it reinstalls, a script, a crash). Telling them apart by the user's
+input just before the close was only a guess, wrong whenever the user
+happened to be typing. Don't bring either back.
 
 ## An app started in the background doesn't take focus (`BackgroundLaunch.swift`)
 

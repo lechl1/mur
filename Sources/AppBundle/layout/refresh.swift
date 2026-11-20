@@ -198,7 +198,6 @@ struct RunSessionGuard: Sendable {
 
 @MainActor
 func refreshModel() {
-    popFocusAfterClose()
     Workspace.garbageCollectUnusedWorkspaces()
     checkOnFocusChangedCallbacks()
     normalizeContainers()
@@ -222,7 +221,6 @@ private func refresh() async throws {
     }
 
     reclaimOrphanedWindows()
-    popFocusAfterClose()
 
     // Garbage collect workspaces after apps, because workspaces contain apps.
     Workspace.garbageCollectUnusedWorkspaces()

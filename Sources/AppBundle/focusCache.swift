@@ -16,10 +16,6 @@
         return
     }
     if nativeFocused?.windowId != lastKnownNativeFocusedWindowId {
-        // mur — remembered so a close can undo macOS's pick (FocusStack).
-        if let from = lastKnownNativeFocusedWindowId {
-            focusStack.noteNativeSwitch(from: from, to: nativeFocused?.windowId, at: .now)
-        }
         _ = nativeFocused?.focusWindow()
         lastKnownNativeFocusedWindowId = nativeFocused?.windowId
     }
