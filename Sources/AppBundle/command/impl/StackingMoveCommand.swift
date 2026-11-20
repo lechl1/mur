@@ -40,18 +40,12 @@ private func crossWorkspaceOrMonitorFallback(
             }
     }
     guard let dest, dest != sourceWorkspace else { return false }
-    let sourceRect = window.lastAppliedLayoutPhysicalRect
-    _ = sourceWorkspace.stackingLayout.remove(window.windowId)
+    let sourceRect = gridRect(of: window, in: sourceWorkspace) ?? window.lastAppliedLayoutPhysicalRect
     _ = moveWindowToWorkspace(
         window, dest, io,
-        focusFollowsWindow: true, failIfNoop: false, mountInGrid: false,
-    )
-    // Best-effort: insert the window into the destination grid at the cell
-    // it "enters" — the edge opposite the move direction, aligned to where
-    // it exited — rather than the generic placement heuristic.
-    insertMovedWindowPositionally(
-        window, into: dest, direction: direction,
-        sourceRect: sourceRect, sourceWorkspace: sourceWorkspace,
+        focusFollowsWindow: true, failIfNoop: false,
+        sourceRect: sourceRect,
+        entry: entryPoint(into: dest, direction: direction, sourceRect: sourceRect, sourceWorkspace: sourceWorkspace),
     )
     if let newSpan = dest.stackingLayout.placements[window.windowId] {
         StackingHud.shared.update(layout: dest.stackingLayout, span: newSpan)
@@ -59,47 +53,30 @@ private func crossWorkspaceOrMonitorFallback(
     return true
 }
 
-/// Insert `window` into `dest`'s grid at the cell it enters when moved in
-/// `direction`: the edge opposite the move (right → dest's left edge,
-/// down → dest's top edge, …), aligned to where the window exited the
-/// source (mapped proportionally across monitors of different sizes). It
-/// merges as a new row of the entered column, inserted between that
-/// column's windows at the matching position — so a cross-workspace /
-/// cross-monitor move lands where you'd expect, like an in-workspace merge.
+/// Where a window moved in `direction` enters `dest`: on the edge opposite
+/// the move (right → dest's left edge, down → dest's top edge, …), aligned
+/// to where it left the source (mapped proportionally across monitors of
+/// different sizes). Its column of its own (`mountInOwnColumn`) is inserted
+/// there: a move right lands leftmost, a move left rightmost, and a move up
+/// or down beside the column it was above or below.
 @MainActor
-private func insertMovedWindowPositionally(
-    _ window: Window,
+private func entryPoint(
     into dest: Workspace,
     direction: CardinalDirection,
     sourceRect: Rect?,
     sourceWorkspace: Workspace,
-) {
-    let layout = dest.stackingLayout
+) -> CGPoint {
     let destAvail = dest.workspaceMonitor.visibleRectPaddedByOuterGaps
-    let sg = CGFloat(ResolvedGaps(gaps: config.gaps, monitor: dest.workspaceMonitor)
-        .inner.get(layout.shape.orientation == .landscape ? .v : .h))
-    if layout.isEmpty {
-        layout.place(window.windowId, at: .soleSlot(lane: 0))
-        return
-    }
-    // Proportional position of where the window exited the source.
     let srcAvail = sourceWorkspace.workspaceMonitor.visibleRectPaddedByOuterGaps
     let srcCenter = sourceRect?.center ?? srcAvail.center
     let fx = srcAvail.width > 0 ? (srcCenter.x - srcAvail.topLeftX) / srcAvail.width : 0.5
     let fy = srcAvail.height > 0 ? (srcCenter.y - srcAvail.topLeftY) / srcAvail.height : 0.5
-    let entry: CGPoint = switch direction {
-        case .right: CGPoint(x: destAvail.topLeftX + 1,                       y: destAvail.topLeftY + fy * destAvail.height)
-        case .left:  CGPoint(x: destAvail.topLeftX + destAvail.width - 1,      y: destAvail.topLeftY + fy * destAvail.height)
-        case .down:  CGPoint(x: destAvail.topLeftX + fx * destAvail.width,     y: destAvail.topLeftY + 1)
-        case .up:    CGPoint(x: destAvail.topLeftX + fx * destAvail.width,     y: destAvail.topLeftY + destAvail.height - 1)
+    return switch direction {
+        case .right: CGPoint(x: destAvail.topLeftX + 1,                  y: destAvail.topLeftY + fy * destAvail.height)
+        case .left:  CGPoint(x: destAvail.topLeftX + destAvail.width - 1, y: destAvail.topLeftY + fy * destAvail.height)
+        case .down:  CGPoint(x: destAvail.topLeftX + fx * destAvail.width, y: destAvail.topLeftY + 1)
+        case .up:    CGPoint(x: destAvail.topLeftX + fx * destAvail.width, y: destAvail.topLeftY + destAvail.height - 1)
     }
-    guard let cell = layout.cellAt(point: entry, in: destAvail, innerGap: sg) else {
-        layout.place(window.windowId, at: .soleSlot(lane: 0))
-        return
-    }
-    let insertAt = layout.insertionSlot(in: cell.lane, at: entry, available: destAvail, innerGap: sg)
-    layout.insertSlot(in: cell.lane, at: insertAt)
-    layout.place(window.windowId, at: .single(lane: cell.lane, slot: insertAt))
 }
 
 /// `mur stacking-move <left|down|up|right>` — move the focused window in
@@ -186,11 +163,14 @@ struct StackingMoveCommand: Command {
 
             if hasLaneMates {
                 // >1 window in the source column → extract into a new column.
+                // It keeps the width it had; the others shrink to make room.
+                let sourceRect = gridRect(of: window, in: workspace)
                 let insertIdx = signum > 0 ? myLane + 1 : myLane
                 layout.insertLane(at: insertIdx)
                 layout.place(window.windowId, at: TileSpan(
                     lane0: insertIdx, lane1: insertIdx, slot0: 0, slot1: 0,
                 ))
+                keepColumnWidth(of: window, in: workspace, sourceRect: sourceRect)
             } else if neighborVisIdx >= 0 && neighborVisIdx < used.count {
                 // Lone window + an adjacent column → merge as a new row,
                 // inserted at the slot matching the window's current
@@ -213,6 +193,8 @@ struct StackingMoveCommand: Command {
                     lane0: targetLane, lane1: targetLane,
                     slot0: insertAt, slot1: insertAt,
                 ))
+                // Its old height, at most an equal share of the column.
+                keepRowHeight(of: window, in: workspace, sourceRect: focusedRect)
             } else {
                 // Lone window at the edge, no adjacent column → spill to the
                 // next workspace (up/down) / monitor (left/right). If there's

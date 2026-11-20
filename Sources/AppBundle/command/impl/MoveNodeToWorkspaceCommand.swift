@@ -1,3 +1,4 @@
+import AppKit
 import Common
 
 struct MoveNodeToWorkspaceCommand: Command {
@@ -29,7 +30,17 @@ struct MoveNodeToWorkspaceCommand: Command {
 }
 
 @MainActor
-func moveWindowToWorkspace(_ window: Window, _ targetWorkspace: Workspace, _ io: CmdIo, focusFollowsWindow: Bool, failIfNoop: Bool, index: Int = INDEX_BIND_LAST, mountInGrid: Bool = true) -> BinaryExitCode {
+func moveWindowToWorkspace(
+    _ window: Window,
+    _ targetWorkspace: Workspace,
+    _ io: CmdIo,
+    focusFollowsWindow: Bool,
+    failIfNoop: Bool,
+    index: Int = INDEX_BIND_LAST,
+    mountInGrid: Bool = true,
+    sourceRect: Rect? = nil,
+    entry: CGPoint? = nil,
+) -> BinaryExitCode {
     if window.nodeWorkspace == targetWorkspace {
         return switch failIfNoop {
             case true: .fail
@@ -37,13 +48,25 @@ func moveWindowToWorkspace(_ window: Window, _ targetWorkspace: Workspace, _ io:
                 .succ(io.err("Window '\(window.windowId)' already belongs to workspace '\(targetWorkspace.name)'. Tip: use --fail-if-noop to exit with non-zero code"))
         }
     }
+    // Read before the window leaves its grid; callers that took it out
+    // themselves pass it.
+    let sourceRect = sourceRect ?? window.nodeWorkspace.flatMap { gridRect(of: window, in: $0) }
     _ = window.nodeWorkspace?.stackingLayout.remove(window.windowId)
     let targetContainer: NonLeafTreeNodeObject = window.isFloating ? targetWorkspace : targetWorkspace.rootTilingContainer
     window.bind(to: targetContainer, adaptiveWeight: WEIGHT_AUTO, index: index)
     // mur — the grid, not the tree, decides where a window renders. Without a
     // cell on the destination it gets no rect: it stays wherever it was (or
     // hidden) and never joins the columns. Callers that place the window
-    // themselves (`stacking-move`) pass `mountInGrid: false`.
-    if mountInGrid { mountMovedWindowInGrid(window, in: targetWorkspace) }
+    // themselves pass `mountInGrid: false`. A tiled window gets a column of
+    // its own at the width it had (`mountInOwnColumn`), not the new-window
+    // heuristic, which stacked it under the focused column at that
+    // column's width.
+    if mountInGrid {
+        if config.experimentalStackingLayout, !window.isFloating {
+            mountInOwnColumn(window, in: targetWorkspace, keeping: sourceRect, entry: entry)
+        } else {
+            mountMovedWindowInGrid(window, in: targetWorkspace)
+        }
+    }
     return .from(bool: focusFollowsWindow ? window.focusWindow() : true)
 }

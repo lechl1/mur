@@ -18,6 +18,9 @@ struct StackingDragSession {
     /// Cell of `targetWorkspace`'s grid under the cursor. nil → that grid
     /// is empty.
     var hoverCell: (lane: Int, slot: Int)?
+    /// The cursor when `hoverCell` was taken: where a window dropped on
+    /// another workspace opens its column.
+    var dropPoint: CGPoint? = nil
 }
 
 /// Drop the dragged window: into the hovered cell, and — when the drag
@@ -29,18 +32,25 @@ func commitStackingDrop(_ session: StackingDragSession) {
     guard let window = Window.get(byId: session.windowId) else { return }
     let target = session.targetWorkspace
     if target != session.workspace {
-        _ = session.workspace.stackingLayout.remove(window.windowId)
+        // Its own column at the width it had, where it was dropped
+        // (`mountInOwnColumn`). Read the rect from the grid before it
+        // leaves: the drag cleared `lastAppliedLayoutPhysicalRect`.
         _ = moveWindowToWorkspace(
             window, target, CmdIo(stdin: .emptyStdin),
             focusFollowsWindow: true, failIfNoop: false,
-            // An empty destination grid has no cell to hover: let the
-            // placement heuristic mount it.
-            mountInGrid: session.hoverCell == nil,
+            sourceRect: gridRect(of: window, in: session.workspace),
+            entry: session.dropPoint,
         )
+        return
     }
     // A window the user floated stays floating where it was dropped: in the
     // grid ⇒ tiled in the tree.
     if let cell = session.hoverCell, !window.isFloating {
-        target.stackingLayout.place(window.windowId, at: .single(lane: cell.lane, slot: cell.slot))
+        let layout = target.stackingLayout
+        let sourceRect = gridRect(of: window, in: target)
+        let changesColumn = layout.placements[window.windowId]?.lane0 != cell.lane
+        layout.place(window.windowId, at: .single(lane: cell.lane, slot: cell.slot))
+        // Into another column: it keeps its height, at most an equal share.
+        if changesColumn { keepRowHeight(of: window, in: target, sourceRect: sourceRect) }
     }
 }

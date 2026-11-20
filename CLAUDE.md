@@ -94,6 +94,26 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   column the width it had in the saved arrangement, and the defaults only
   to a column the arrangement doesn't know.
 
+- **A moved window keeps its size** (`MovedWindowSize.swift`). Sizes are
+  converted through the rect the window rendered at, in points, so they
+  survive a strip of another width or a monitor of another size.
+  - **To another workspace** (`move-node-to-workspace`/`-monitor`, a
+    `stacking-move` over the edge, a drag to another monitor) it gets a
+    **column of its own at its old width** (`mountInOwnColumn` →
+    `StackingLayout.placeInOwnLane` / `keepLaneWidth`): the other columns
+    shrink in proportion, only as far as needed to make room (a strip that
+    still fits stays centred), never below `minLaneWidth`. Rows instead of
+    columns in portrait. It opens where it enters (`laneInsertionIndex`):
+    a move right lands leftmost, left rightmost, up/down beside the column
+    it was above or below, a drop where it was dropped. It used to join
+    the entered column as a row, at that column's width.
+  - **Into another column of the same workspace** (a lone window's
+    `stacking-move` merge, a drag into another column) the column keeps
+    its width and the window's row keeps its old height, **at most an
+    equal share** (`keepSlotShare`), so a window that filled its old column
+    doesn't squash its new column mates. Extracted into a new column, it
+    keeps its rendered width and the others shrink (`keepColumnWidth`).
+
 - **The rows fill the column** (the widths fill the row in portrait).
   `slotExtents` shares the slot axis by slot weight, but pins a row whose
   window can't be shorter (`minimumSizes`) or taller (`maximumSizes`) at

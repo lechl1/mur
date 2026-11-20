@@ -821,6 +821,83 @@ final class StackingLayout {
         return total / CGFloat(existing.count)
     }
 
+    // MARK: Moved windows keep their size
+
+    /// mur — A MOVED WINDOW KEEPS ITS WIDTH. Give `lane` the absolute width
+    /// `width` (a fraction of the lane axis: column width in landscape, row
+    /// height in portrait) and shrink the other columns in proportion to
+    /// their widths, only as far as needed to make room: a strip that still
+    /// fits stays centred and keeps its widths. Every column keeps at least
+    /// `StackingResize.minLaneWidth`, so a very wide window gives way a
+    /// little rather than squeezing its neighbours to nothing. A lone column
+    /// just takes the width and is centred.
+    func keepLaneWidth(_ width: CGFloat, lane: Int) {
+        let used = usedLanes
+        guard used.contains(lane), width > 0 else { return }
+        let minW = StackingResize.minLaneWidth
+        let others = used.filter { $0 != lane }
+        var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
+        let w = max(minW, min(width, 1 - CGFloat(others.count) * minW))
+        let othersTotal = others.reduce(0.0) { $0 + weights[$1] }
+        if othersTotal > 1 - w, othersTotal > 0 {
+            for l in others { weights[l] = max(minW, weights[l] * (1 - w) / othersTotal) }
+        }
+        weights[lane] = w
+        setLaneWeights(weights)
+    }
+
+    /// mur — A WINDOW MOVED INTO ANOTHER COLUMN KEEPS ITS HEIGHT, but takes
+    /// at most an equal share of it. `share` is its old slot-axis size as a
+    /// fraction of the column (row height in landscape, width in portrait).
+    /// The other rows keep their proportions and take the rest. The cap
+    /// stops a window that filled its old column on its own from squashing
+    /// its new column mates; the `1/16` floor matches `normalizeWeights`.
+    func keepSlotShare(_ share: CGFloat, lane: Int, slot: Int) {
+        let n = slotCount(in: lane)
+        guard n >= 2, slot >= 0, slot < n, share > 0 else { return }
+        let f = min(max(share, 1.0 / 16), 1 / CGFloat(n))
+        var weights: [CGFloat] = (0 ..< n).map { slotWeight(lane: lane, slot: $0) }
+        let othersTotal = weights.reduce(0, +) - weights[slot]
+        guard othersTotal > 0 else { return }
+        weights[slot] = f * othersTotal / (1 - f)
+        setSlotWeights(lane: lane, weights: weights)
+    }
+
+    /// Put `windowId` (not yet in this grid) in a column of its own,
+    /// inserted before lane `lane` (`usedLanes.count`, or past the last
+    /// used lane, appends), at `width` — see `keepLaneWidth`.
+    func placeInOwnLane(_ windowId: WindowId, at lane: Int, width: CGFloat) {
+        let idx = max(0, lane)
+        let target: Int
+        if idx >= shape.lanes {
+            target = appendLane()
+        } else {
+            if usedLanes.contains(idx) { insertLane(at: idx) }
+            target = idx
+        }
+        place(windowId, at: .soleSlot(lane: target))
+        if let placed = placements[windowId] { keepLaneWidth(width, lane: placed.lane0) }
+    }
+
+    /// The lane a column entering at `point` is inserted before: the first
+    /// used lane whose centre lies past the point along the lane axis, or
+    /// one past the last used lane. Mirrors `resolveRect`'s geometry.
+    func laneInsertionIndex(at point: CGPoint, in available: Rect, innerGap: CGFloat = 0) -> Int {
+        let used = usedLanes
+        guard !used.isEmpty else { return 0 }
+        let landscape = shape.orientation == .landscape
+        let axisFull = landscape ? available.width : available.height
+        var c = (landscape ? available.topLeftX : available.topLeftY)
+        let pt = landscape ? point.x : point.y
+        let (offset, extents) = laneExtents(used: used, laneAxisFull: axisFull, innerGap: innerGap)
+        c += offset
+        for (i, l) in used.enumerated() {
+            if pt < c + extents[i] / 2 { return l }
+            c += extents[i] + innerGap
+        }
+        return (used.last ?? -1) + 1
+    }
+
     // MARK: Slot weights
 
     func slotWeight(lane: Int, slot: Int) -> CGFloat {

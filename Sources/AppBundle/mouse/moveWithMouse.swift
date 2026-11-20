@@ -84,6 +84,7 @@ private func moveWithMouse(_ window: Window) async throws { // todo cover with t
                 workspace: workspace,
                 targetWorkspace: target,
                 hoverCell: hoverCell(in: target),
+                dropPoint: mouseLocation,
             )
             return
         }
@@ -118,6 +119,7 @@ private func moveStackingWindow(_ window: Window, workspace: Workspace) {
         workspace: workspace,
         targetWorkspace: target,
         hoverCell: hoverCell,
+        dropPoint: mouseLocation,
     )
     let hoverSpan = hoverCell.map { TileSpan.single(lane: $0.lane, slot: $0.slot) }
     if target == workspace {
