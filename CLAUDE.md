@@ -241,6 +241,28 @@ delivered to a dying window's own element is unreliable — for some apps it
 never arrives, and the close then went unnoticed until an unrelated event
 woke mur up.
 
+## Focus pops back when a window closes (`FocusStack.swift`)
+
+mur keeps a **focus stack**: every window it focuses (`setFocus`) goes to
+the top. When the focused window closes or its app quits, focus goes to the
+window that had it before, on whichever workspace that is
+(`popFocusAfterClose`, run once after each batch of garbage-collected
+windows, so an app quitting with several windows never hands focus to one
+of its own dying windows). It used to go to the closed window's workspace's
+most recent window, or to whatever macOS picked.
+
+macOS moves focus first (the app's next window, the next app), and mur
+follows it (`updateFocusCache`) before it notices the close. So every
+native focus move records the stack as it was (`noteNativeSwitch`); when
+the window focus left dies within `FocusStack.fallbackWindow` (2s), that
+move was macOS's fallback and the stack is rolled back to the snapshot. A
+window that opened within that time keeps the focus it was given: that is
+a splash or a dialog handing over to the app's main window. A background
+window closing changes nothing. Minimized and hidden windows are skipped
+but stay in the stack. Moving a window to another workspace without
+`--focus-follows-window` focuses that workspace's next window, and that
+counts as a focus.
+
 ## Restore is workspace-aware
 
 **Positions are saved as relative arrangements, not indices**
