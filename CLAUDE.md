@@ -263,6 +263,27 @@ but stay in the stack. Moving a window to another workspace without
 `--focus-follows-window` focuses that workspace's next window, and that
 counts as a focus.
 
+## An app started in the background doesn't take focus (`BackgroundLaunch.swift`)
+
+depot quits an app it reinstalls and reopens it with `open <bundle>`. The
+app activates as it starts, and mur, which follows macOS's focus
+(`updateFocusCache`), used to follow it onto its workspace, away from what
+the user was doing. Now, for `BackgroundLaunch.grace` (10s) after such a
+launch, and until the user clicks, mur declines that focus move: it stays
+where it is and gives macOS's focus back to the focused window.
+
+A launch counts as **background** when LaunchServices recorded no app that
+asked for it (`parentASN`, as `lsappinfo` shows it: Dock, Spotlight, Finder,
+Raycast, loginwindow are user launches) **and** the process's parent is
+launchd, which is what `open` (depot, a script, a terminal), launchd and
+login agents produce. An app run straight from a terminal (`just dev`) has
+no `parentASN` either, but its parent is the shell, so it keeps focus. The
+LaunchServices calls (`_LSASNCreateWithPid`, `_LSCopyApplicationInformation`)
+are private, looked up with `dlsym`: a macOS without them makes the origin
+unknown, and an unknown origin is followed as before. One trade-off:
+`open -a X` typed in a terminal looks exactly like depot, so it doesn't
+take focus either.
+
 ## Restore is workspace-aware
 
 **Positions are saved as relative arrangements, not indices**

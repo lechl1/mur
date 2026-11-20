@@ -67,6 +67,7 @@ enum GlobalObserver {
             //  resetManipulatedWithMouseIfPossible might call its own refreshSession
             //  The end of the callback calls refreshSession
             fireAndForget { @MainActor in
+                lastUserClickDate = .now // mur — see BackgroundLaunch
                 guard let token: RunSessionGuard = .isServerEnabled else { return }
                 // mur — drag-drop snap. Commit a grid drag (if any)
                 // before resetting the mouse-manipulation state.

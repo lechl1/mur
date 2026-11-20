@@ -388,6 +388,7 @@ final class MacApp: AbstractApp {
         // mur — its windows go back to their workspaces if it reopens soon.
         _ = await Task { @MainActor [pid, rawAppBundleId] in
             _ = MacApp.allAppsMap.removeValue(forKey: pid)
+            forgetLaunchOrigin(pid: pid)
             if let rawAppBundleId { relaunchedApps.noteTerminated(rawAppBundleId) }
         }.result
         for (_, job) in setFrameJobs {

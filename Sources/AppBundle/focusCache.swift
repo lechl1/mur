@@ -7,6 +7,14 @@
     if nativeFocused?.parent is MacosPopupWindowsContainer {
         return
     }
+    // mur — an app started in the background (a depot relaunch) doesn't
+    // take focus: stay put and give macOS's focus back (BackgroundLaunch).
+    if let nativeFocused, nativeFocused.windowId != lastKnownNativeFocusedWindowId,
+       declinesBackgroundLaunchFocus(nativeFocused)
+    {
+        focus.windowOrNil?.nativeFocus()
+        return
+    }
     if nativeFocused?.windowId != lastKnownNativeFocusedWindowId {
         // mur — remembered so a close can undo macOS's pick (FocusStack).
         if let from = lastKnownNativeFocusedWindowId {
