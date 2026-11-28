@@ -333,6 +333,19 @@ private func runCoordinatedRestore() async {
     let unrankedLaneBase = Int.max - 1000
     var unrankedCount = 0
 
+    // The saved arrangement's entries are claimed for the whole batch at
+    // once (`claimAll`): every exact match before any app guess.
+    var identities: [(WindowId, ArrangedWindow)] = []
+    for id in ids {
+        guard let window = Window.get(byId: id), window.nodeWorkspace != nil,
+              !(openedLaterIds.contains(id) && !isStartupRestore) else { continue }
+        identities.append((id, await arrangedWindow(window)))
+    }
+    var claims: [WindowId: ArrangementStore.Claim] = [:]
+    for (i, claim) in arrangementStore.claimAll(identities.map(\.1)).enumerated() {
+        if let claim { claims[identities[i].0] = claim }
+    }
+
     for id in ids {
         guard let window = Window.get(byId: id), let curWs = window.nodeWorkspace else {
             forgetOpenedLater(id)
@@ -373,7 +386,7 @@ private func runCoordinatedRestore() async {
         // or just a cell its app used to have (the pool below).
         var isAppPoolGuess = false
         var savedWidth: CGFloat?
-        if let spot = arrangementStore.claim(await arrangedWindow(window)) {
+        if let spot = claims[id] {
             recalled = StoredWindowState(
                 floating: false,
                 span: .single(lane: spot.path.column, slot: spot.path.row),

@@ -96,6 +96,50 @@ struct ArrangementTest {
         #expect(reloaded.claim(ArrangedWindow(appId: "term", title: "more")) == nil)
     }
 
+    /// The reported bug: two Brave windows, on 2 and 6. After a restart the
+    /// one from 6 had a new tab title, was claimed first, and took 2's entry
+    /// as its app guess; 2's window then guessed 6. Exact matches go first.
+    @Test func anExactMatchIsNeverTakenByAnotherWindowsGuess() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mur-arr-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ArrangementStore(url: url)
+        store.update(
+            live: ["2": [col(w("Mail - Brave", "brave"))], "6": [col(w("Docs - Brave", "brave"))]],
+            ids: ["2": [[1]], "6": [[2]]],
+            restoring: false,
+        )
+        let reloaded = ArrangementStore(url: url)
+        let claims = reloaded.claimAll([w("New Tab - Brave", "brave"), w("Mail - Brave", "brave")])
+        #expect(claims[0]?.workspace == "6")
+        #expect(claims[0]?.isAppGuess == true)
+        #expect(claims[1]?.workspace == "2")
+        #expect(claims[1]?.isAppGuess == false)
+    }
+
+    /// A guess takes the most alike title, not the first workspace's.
+    @Test func aGuessTakesTheMostAlikeTitle() {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mur-arr-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = ArrangementStore(url: url)
+        store.update(
+            live: [
+                "2": [col(w("Mail - Brave", "brave"))],
+                "6": [col(w("Linux Weekly News - YouTube - Brave", "brave"))],
+            ],
+            ids: ["2": [[1]], "6": [[2]]],
+            restoring: false,
+        )
+        let reloaded = ArrangementStore(url: url)
+        let claim = reloaded.claim(w("(1) Linux Weekly News - YouTube - Video playing in picture-in-picture mode - Brave", "brave"))
+        #expect(claim?.workspace == "6")
+    }
+
+    @Test func bestTitleMatchIgnoresWordsEveryCandidateHas() {
+        #expect(Arrangement.bestTitleMatch("Foo - Brave", among: ["New Tab - Brave", "Foo bar baz qux - Brave"]) == 1)
+        #expect(Arrangement.bestTitleMatch("Zed - Brave", among: ["New Tab - Brave", "Mail - Brave"]) == nil)
+        #expect(Arrangement.bestTitleMatch("", among: ["a"]) == nil)
+    }
+
     /// mur's restart used to reset every column to the default width: the
     /// restore now gets back the width the column was saved with.
     @Test func claimHandsBackTheColumnsWidth() {

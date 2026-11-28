@@ -64,6 +64,34 @@ enum Arrangement {
         return out
     }
 
+    /// The words of a title, lowercased, for `bestTitleMatch`.
+    static func titleWords(_ title: String) -> Set<String> {
+        Set(title.lowercased().split { !($0.isLetter || $0.isNumber) }.map(String.init))
+    }
+
+    /// mur — WHICH OF AN APP'S SAVED TITLES IS THIS WINDOW, WHEN NONE IS
+    /// EQUAL. A browser's title is its tab's, and a tab changes between
+    /// restarts: YouTube's "(1) " unread count, "Video playing in
+    /// picture-in-picture mode", a reload. The index of the candidate
+    /// sharing the largest fraction of words with `title` (Jaccard), not
+    /// counting words every candidate has ("Brave"), which say nothing.
+    /// nil when no candidate shares a word; ties go to the first.
+    static func bestTitleMatch(_ title: String, among candidates: [String]) -> Int? {
+        let sets = candidates.map(titleWords)
+        let common = sets.count > 1 ? sets.dropFirst().reduce(sets[0]) { $0.intersection($1) } : []
+        let mine = titleWords(title).subtracting(common)
+        guard !mine.isEmpty else { return nil }
+        var best: (index: Int, score: Double)? = nil
+        for (i, c) in sets.enumerated() {
+            let theirs = c.subtracting(common)
+            let shared = mine.intersection(theirs).count
+            guard shared > 0 else { continue }
+            let score = Double(shared) / Double(mine.union(theirs).count)
+            if score > (best?.score ?? 0) { best = (i, score) }
+        }
+        return best?.index
+    }
+
     /// The live arrangement, with every saved window that isn't live any
     /// more (a ghost) put back beside its old neighbours. `heldElsewhere`
     /// are windows live on another workspace: they moved, so they are no
@@ -239,6 +267,7 @@ final class ArrangementStore {
             }
         }
         if !title.isEmpty, let hit = ghosts.first(where: { $0.title == title }) { return hit.workspace }
+        if let i = Arrangement.bestTitleMatch(title, among: ghosts.map(\.title)) { return ghosts[i].workspace }
         let names = Set(ghosts.map(\.workspace))
         return names.count == 1 ? names.first : nil
     }
@@ -255,16 +284,39 @@ final class ArrangementStore {
         let width: CGFloat
     }
 
-    func claim(_ w: ArrangedWindow) -> Claim? {
-        let candidates = workspaces.keys.sorted().flatMap { ws in
-            Arrangement.paths(workspaces[ws] ?? []).map { (ws, $0, workspaces[ws]![$0.column].windows[$0.row]) }
-        }.filter { !claimed.contains(Self.claimKey($0.0, $0.1)) }
-        let pick = candidates.first { $0.2 == w }.map { ($0, false) }
-            ?? (w.cwd == nil ? nil : candidates.first { $0.2.appId == w.appId && $0.2.cwd == w.cwd }.map { ($0, false) })
-            ?? candidates.first { $0.2.appId == w.appId }.map { ($0, true) }
-        guard let ((ws, path, _), guess) = pick else { return nil }
-        claimed.insert(Self.claimKey(ws, path))
-        return Claim(workspace: ws, path: path, isAppGuess: guess, width: workspaces[ws]![path.column].width)
+    func claim(_ w: ArrangedWindow) -> Claim? { claimAll([w])[0] }
+
+    /// `claim` for a whole restore batch, in passes: every window's own
+    /// entry (same identity) first, then a terminal's cwd, and only then the
+    /// app guesses. Claiming one window at a time let a window whose title
+    /// had changed (a browser tab that reloaded) take, as its app guess, the
+    /// entry another window of the app was about to match exactly; that one
+    /// then guessed too, and two Brave windows swapped workspaces. A guess
+    /// takes the app's entry whose title is most alike (`bestTitleMatch`),
+    /// not the first in workspace-name order.
+    func claimAll(_ windows: [ArrangedWindow]) -> [Claim?] {
+        var out = [Claim?](repeating: nil, count: windows.count)
+        func free() -> [(ws: String, path: Arrangement.Path, entry: ArrangedWindow)] {
+            workspaces.keys.sorted().flatMap { ws in
+                Arrangement.paths(workspaces[ws] ?? []).map { (ws, $0, workspaces[ws]![$0.column].windows[$0.row]) }
+            }.filter { !claimed.contains(Self.claimKey($0.ws, $0.path)) }
+        }
+        func take(_ i: Int, _ pick: (ws: String, path: Arrangement.Path, entry: ArrangedWindow), guess: Bool) {
+            claimed.insert(Self.claimKey(pick.ws, pick.path))
+            out[i] = Claim(workspace: pick.ws, path: pick.path, isAppGuess: guess, width: workspaces[pick.ws]![pick.path.column].width)
+        }
+        for (i, w) in windows.enumerated() {
+            if let pick = free().first(where: { $0.entry == w }) { take(i, pick, guess: false) }
+        }
+        for (i, w) in windows.enumerated() where out[i] == nil && w.cwd != nil {
+            if let pick = free().first(where: { $0.entry.appId == w.appId && $0.entry.cwd == w.cwd }) { take(i, pick, guess: false) }
+        }
+        for (i, w) in windows.enumerated() where out[i] == nil {
+            let mine = free().filter { $0.entry.appId == w.appId }
+            guard !mine.isEmpty else { continue }
+            take(i, mine[Arrangement.bestTitleMatch(w.title, among: mine.map(\.entry.title)) ?? 0], guess: true)
+        }
+        return out
     }
 
     private static func claimKey(_ ws: String, _ p: Arrangement.Path) -> String { "\(ws)|\(p.column)|\(p.row)" }

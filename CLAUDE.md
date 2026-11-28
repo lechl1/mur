@@ -322,8 +322,15 @@ happened to be. A closed window stays in the array as a **ghost**:
 ghost beside its old neighbours. A window of that app opening later (an
 app restart) takes the ghost's spot synchronously at registration
 (`takeGhostCell` → `StackingLayout.placeBeside`), and the startup restore
-`claim`s entries by identity, then terminal cwd, then app. A renamed window
-(browser tab) claims its app's ghost, so ghosts don't pile up. The old
+`claimAll`s entries by identity, then terminal cwd, then app — **in passes
+over the whole batch**, so every exact match is made before any app guess.
+Claiming window by window let a Brave window whose tab title had changed
+take, as its guess, the entry the other Brave window matched exactly, and
+the two swapped workspaces. An app guess takes the entry whose title is most
+alike (`Arrangement.bestTitleMatch`: shared words, ignoring words all the
+app's entries have, like "Brave"), not the first in workspace-name order;
+`ghostWorkspace` uses the same ranking. A renamed window (browser tab)
+claims its app's ghost, so ghosts don't pile up. The old
 `WindowMemory` / terminal-session spans are only the fallback for a window
 the arrangement has never seen.
 
