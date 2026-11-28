@@ -69,5 +69,7 @@ func moveWindowToWorkspace(
             mountMovedWindowInGrid(window, in: targetWorkspace)
         }
     }
+    // The column it joined halfway on the old workspace gets its width back.
+    restoreColumnLeft(by: window)
     return .from(bool: focusFollowsWindow ? window.focusWindow() : true)
 }

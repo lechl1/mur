@@ -24,11 +24,19 @@ tree like i3/sway. This is a core design invariant: keep it that way.
   (0.4)** — deliberately below `1.0` so columns render at their natural width
   and **center** instead of auto-expanding to fill (that was the whole point of
   the naru port). In `resolveRect`, if the used columns' total desired width is
-  **≤ 1** the strip renders at those widths and is **centered**; if it
-  **exceeds 1** the columns shrink by a shared factor to fill
-  (`denom = max(1, totalLaneWeight)` unifies both). So one column → half width
-  centered; two → fill; three-plus → shrink to fit. A lone terminal (`1/3` via
-  `setLaneAbsoluteWidth`) renders centered. The slot axis (rows within a
+  **below `StackingLayout.fillThreshold` (0.75)** the strip renders at those
+  widths and is **centered**; from 0.75 up the columns scale by a shared
+  factor to **fill** the axis edge to edge — up when the total is under 1,
+  down when it's over (`StackingLayout.renderedTotal` gives the divisor and
+  is shared by `laneExtents`, `StackingResize.setLaneWidth` and the key
+  resize). So a strip using 75% of the screen doesn't leave two thin
+  margins: one default column → 0.4 centered; two (0.8) → fill; three-plus
+  → shrink to fit. It is a render-time rule, the stored weights aren't
+  touched, so a narrower strip centres again. A lone full column shrunk by
+  key jumps straight below 0.75 (anything above still renders full). A lone
+  terminal (`1/3` via `setLaneAbsoluteWidth`) renders centered. "The
+  screen is full" means total ≥ 0.75 everywhere else too
+  (`widthForNewColumn`, `placeBeside`). The slot axis (rows within a
   column) still fills the column. `cellAt` mirrors the same math.
 - **A window's minimum size wins.** Some apps refuse to go narrower than a
   minimum (Spotify: ~800px). The post-layout fill check
@@ -108,11 +116,20 @@ tree like i3/sway. This is a core design invariant: keep it that way.
     it was above or below, a drop where it was dropped. It used to join
     the entered column as a row, at that column's width.
   - **Into another column of the same workspace** (a lone window's
-    `stacking-move` merge, a drag into another column) the column keeps
-    its width and the window's row keeps its old height, **at most an
-    equal share** (`keepSlotShare`), so a window that filled its old column
-    doesn't squash its new column mates. Extracted into a new column, it
-    keeps its rendered width and the others shrink (`keepColumnWidth`).
+    `stacking-move` merge, a drag into another column) the window's row
+    keeps its old height, **at most an equal share** (`keepSlotShare`), so
+    a window that filled its old column doesn't squash its new column
+    mates. Extracted into a new column, it keeps its rendered width and the
+    others shrink (`keepColumnWidth`).
+  - **The column it joins meets it halfway, for now** (`JoinedColumnMemory`,
+    `meetHalfway`): the column takes the width halfway between its own and
+    the window's (the size remembered at the start of its moves, see
+    below), via `keepLaneWidth`, and remembers its old width by the windows
+    it held. When the SAME window moves on — into another column, a column
+    of its own, another workspace — the column it leaves gets its old width
+    back (`restoreColumnLeft`). Otherwise the halfway width is final:
+    another window's move (`startMove`) or a resize forgets it. Heights in
+    portrait. It used to keep its own width outright.
   - **Back in a column of its own, it gets back the size it had when the
     move began** (`MoveSizeMemory`). One window is remembered at a time:
     its first move (`stacking-move` on either axis, `move-node-to-*`, a

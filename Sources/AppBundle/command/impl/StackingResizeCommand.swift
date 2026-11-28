@@ -60,6 +60,7 @@ struct StackingResizeCommand: Command {
         }
         // The user picks new sizes: a later move keeps these (`MoveSizeMemory`).
         moveSizeMemory.forget()
+        joinedColumnMemory.forget()
 
         let shape = layout.shape
         let isLaneAxis: Bool
@@ -205,7 +206,8 @@ extension StackingResize {
     /// resize takes (`setLaneWidth`): the other columns give or take the
     /// difference in proportion, so shrinking one grows the others and
     /// the strip fills the screen. A lone column changes on its own,
-    /// clamped to `[0.1, 1.0]`, and fit-or-center re-centres it.
+    /// clamped to `[0.1, 1.0]`, and fit-or-center re-centres it (from
+    /// `fillThreshold` up it fills, so shrinking jumps below that).
     static func resizeLaneWidth(layout: StackingLayout, lane: Int, signum: Int, step: CGFloat = 0.1) {
         let used = layout.usedLanes
         guard lane >= 0, lane < layout.shape.lanes, used.contains(lane) else { return }
@@ -213,9 +215,17 @@ extension StackingResize {
         for l in 0 ..< layout.shape.lanes { weights.append(layout.laneWeight(lane: l)) }
         let before = weights
         let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
-        let cur = weights[lane] / max(1.0, usedTotal)
+        let cur = weights[lane] / StackingLayout.renderedTotal(usedTotal)
         var next = cur + CGFloat(signum) * step
-        if used.count == 1 { next = max(0.1, min(1.0, next)) }
+        if used.count == 1 {
+            next = max(0.1, min(1.0, next))
+            // Anything from `fillThreshold` up renders full width: a lone
+            // full column shrinking steps straight below it, or the first
+            // presses would change nothing on screen.
+            if signum < 0, next >= StackingLayout.fillThreshold {
+                next = StackingLayout.fillThreshold - step / 2
+            }
+        }
         setLaneWidth(&weights, used: used, lanes: lane ... lane, width: next)
         guard zip(before, weights).contains(where: { abs($0 - $1) > 1e-6 }) else { return }
         layout.setLaneWeights(weights)

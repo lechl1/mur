@@ -110,6 +110,7 @@ struct MoveSizeMemory {
 /// still decides where it enters).
 @MainActor
 func startMove(of window: Window, renderedAt rect: Rect?) -> Rect? {
+    joinedColumnMemory.startMove(window.windowId)
     let size = moveSizeMemory.startMove(window.windowId, renderedSize: rect.map { CGSize(width: $0.width, height: $0.height) })
     guard let rect, let size else { return rect }
     let center = rect.center
@@ -119,4 +120,109 @@ func startMove(of window: Window, renderedAt rect: Rect?) -> Rect? {
         width: size.width,
         height: size.height,
     )
+}
+
+/// mur — A WINDOW JOINING ANOTHER COLUMN MEETS IT HALFWAY, FOR NOW (see
+/// CLAUDE.md). The column it joins as a row takes the width halfway between
+/// its own and the window's (rows in portrait: the height), and the column's
+/// old width is remembered. If the same window moves on into another column,
+/// another workspace or a column of its own, the column it leaves gets that
+/// width back. Otherwise the halfway width is final: another window's move or
+/// a resize forgets it. One column is remembered at a time, by the windows
+/// it held (indices are rewritten by every compaction).
+struct JoinedColumnMemory {
+    struct Entry: Equatable {
+        /// The window that joined the column.
+        let windowId: WindowId
+        let workspace: String
+        /// The column's windows before it joined.
+        let mates: [WindowId]
+        /// The column's rendered width then, a fraction of the lane axis.
+        let width: CGFloat
+    }
+
+    private(set) var entry: Entry? = nil
+
+    mutating func joined(_ entry: Entry) { self.entry = entry }
+
+    /// `windowId` starts a move: another window's move makes the halfway
+    /// width final.
+    mutating func startMove(_ windowId: WindowId) {
+        if entry?.windowId != windowId { entry = nil }
+    }
+
+    mutating func forget() { entry = nil }
+}
+
+@MainActor var joinedColumnMemory = JoinedColumnMemory()
+
+/// The width halfway between a column's and a window's, both fractions of
+/// the lane axis.
+func halfwayWidth(column: CGFloat, window: CGFloat) -> CGFloat {
+    (column + window) / 2
+}
+
+/// The rendered width of the column holding `windowId` in `workspace`, as a
+/// fraction of the lane axis (height in portrait). nil without a cell.
+@MainActor
+func renderedColumnFraction(of windowId: WindowId, in workspace: Workspace) -> CGFloat? {
+    let layout = workspace.stackingLayout
+    guard let span = layout.placements[windowId] else { return nil }
+    let used = layout.usedLanes
+    guard let idx = used.firstIndex(of: span.lane0) else { return nil }
+    let avail = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+    let axis = layout.shape.orientation == .landscape ? avail.width : avail.height
+    guard axis > 0 else { return nil }
+    let extents = layout.laneExtents(used: used, laneAxisFull: axis, innerGap: gridInnerGap(workspace)).extents
+    return extents[idx] / axis
+}
+
+/// A column `window` is about to join: its windows and rendered width,
+/// read before the move rewrites the grid.
+struct JoinedColumn {
+    let mates: [WindowId]
+    let width: CGFloat
+}
+
+@MainActor
+func columnAboutToBeJoined(lane: Int, in workspace: Workspace, by window: Window) -> JoinedColumn? {
+    let mates = workspace.stackingLayout.windows(in: lane).filter { $0 != window.windowId }
+    guard let first = mates.first, let width = renderedColumnFraction(of: first, in: workspace) else { return nil }
+    return JoinedColumn(mates: mates, width: width)
+}
+
+/// `window` has joined `column` as a row: the column takes the width halfway
+/// between its own and the window's `windowRect` (the size it had when this
+/// run of moves began), and its old width is remembered for
+/// `restoreColumnLeft`.
+@MainActor
+func meetHalfway(_ window: Window, joined column: JoinedColumn?, in workspace: Workspace, windowRect: Rect?) {
+    let layout = workspace.stackingLayout
+    guard let column, let windowRect, let span = layout.placements[window.windowId] else { return }
+    let avail = workspace.workspaceMonitor.visibleRectPaddedByOuterGaps
+    let landscape = layout.shape.orientation == .landscape
+    let axis = landscape ? avail.width : avail.height
+    guard axis > 0 else { return }
+    let own = (landscape ? windowRect.width : windowRect.height) / axis
+    layout.keepLaneWidth(halfwayWidth(column: column.width, window: own), lane: span.lane0)
+    joinedColumnMemory.joined(.init(
+        windowId: window.windowId, workspace: workspace.name, mates: column.mates, width: column.width,
+    ))
+}
+
+/// After a move of `window`: if it has left the column it joined halfway
+/// (another column, another workspace, a column of its own), that column
+/// gets its old width back. A move within the column (a row swap) keeps
+/// the memory.
+@MainActor
+func restoreColumnLeft(by window: Window) {
+    guard let entry = joinedColumnMemory.entry, entry.windowId == window.windowId else { return }
+    let layout = Workspace.get(byName: entry.workspace).stackingLayout
+    guard let lane = entry.mates.lazy.compactMap({ layout.placements[$0] }).first?.lane0 else {
+        joinedColumnMemory.forget() // the column is gone
+        return
+    }
+    if let mine = layout.placements[window.windowId], mine.lane0 <= lane, lane <= mine.lane1 { return }
+    joinedColumnMemory.forget()
+    layout.keepLaneWidth(entry.width, lane: lane)
 }

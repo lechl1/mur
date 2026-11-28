@@ -169,7 +169,7 @@ enum StackingResize {
 
     /// Give `lanes` (one column, possibly spanning several lanes) the
     /// rendered `width`, a fraction of the lane axis. Used lanes are first
-    /// snapshotted at their rendered fractions (`w / max(1, total)`), so
+    /// snapshotted at their rendered fractions (`w / renderedTotal`), so
     /// nothing jumps. The other used columns then take what is left of the
     /// whole axis, in proportion to their widths: shrinking one grows the
     /// others, growing one shrinks them, and the strip fills the screen
@@ -179,7 +179,7 @@ enum StackingResize {
     /// the full axis.
     static func setLaneWidth(_ weights: inout [CGFloat], used: [Int], lanes: ClosedRange<Int>, width: CGFloat) {
         let usedTotal = used.reduce(0.0) { $0 + weights[$1] }
-        let denom = max(1.0, usedTotal)
+        let denom = StackingLayout.renderedTotal(usedTotal)
         for l in used { weights[l] = weights[l] / denom }
         let span = lanes.filter { used.contains($0) }
         let others = used.filter { !lanes.contains($0) }

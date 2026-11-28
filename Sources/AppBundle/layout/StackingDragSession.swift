@@ -48,10 +48,17 @@ func commitStackingDrop(_ session: StackingDragSession) {
     if let cell = session.hoverCell, !window.isFloating {
         let layout = target.stackingLayout
         let sourceRect = gridRect(of: window, in: target)
-        _ = startMove(of: window, renderedAt: sourceRect) // a move start (`MoveSizeMemory`)
+        let rememberedRect = startMove(of: window, renderedAt: sourceRect) // a move start (`MoveSizeMemory`)
         let changesColumn = layout.placements[window.windowId]?.lane0 != cell.lane
+        let joined = changesColumn ? columnAboutToBeJoined(lane: cell.lane, in: target, by: window) : nil
         layout.place(window.windowId, at: .single(lane: cell.lane, slot: cell.slot))
-        // Into another column: it keeps its height, at most an equal share.
-        if changesColumn { keepRowHeight(of: window, in: target, sourceRect: sourceRect) }
+        // Into another column: it keeps its height, at most an equal share,
+        // the column it left gets its old width back, and the one it joins
+        // meets it halfway (`JoinedColumnMemory`).
+        if changesColumn {
+            keepRowHeight(of: window, in: target, sourceRect: sourceRect)
+            restoreColumnLeft(by: window)
+            meetHalfway(window, joined: joined, in: target, windowRect: rememberedRect)
+        }
     }
 }

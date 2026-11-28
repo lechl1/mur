@@ -29,6 +29,7 @@ func setUpWorkspacesForTests() {
     ghostWindowIds = []
     focusStack = FocusStack()
     moveSizeMemory = MoveSizeMemory()
+    joinedColumnMemory = JoinedColumnMemory()
 
     for workspace in Workspace.all {
         for child in workspace.children {

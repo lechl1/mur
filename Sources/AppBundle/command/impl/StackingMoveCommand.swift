@@ -175,6 +175,9 @@ struct StackingMoveCommand: Command {
                 layout.place(window.windowId, at: TileSpan(
                     lane0: insertIdx, lane1: insertIdx, slot0: 0, slot1: 0,
                 ))
+                // The column it leaves gets back the width it had before
+                // this window joined it halfway (`JoinedColumnMemory`).
+                restoreColumnLeft(by: window)
                 keepColumnWidth(of: window, in: workspace, sourceRect: rememberedRect)
             } else if neighborVisIdx >= 0 && neighborVisIdx < used.count {
                 // Lone window + an adjacent column → merge as a new row,
@@ -193,6 +196,7 @@ struct StackingMoveCommand: Command {
                 let insertAt = layout.insertionSlot(
                     in: targetLane, at: center, available: available, innerGap: sg,
                 )
+                let joined = columnAboutToBeJoined(lane: targetLane, in: workspace, by: window)
                 layout.insertSlot(in: targetLane, at: insertAt)
                 layout.place(window.windowId, at: TileSpan(
                     lane0: targetLane, lane1: targetLane,
@@ -200,6 +204,9 @@ struct StackingMoveCommand: Command {
                 ))
                 // Its old height, at most an equal share of the column.
                 keepRowHeight(of: window, in: workspace, sourceRect: focusedRect)
+                // The column meets it halfway, until it moves on.
+                restoreColumnLeft(by: window)
+                meetHalfway(window, joined: joined, in: workspace, windowRect: rememberedRect)
             } else {
                 // Lone window at the edge, no adjacent column → spill to the
                 // next workspace (up/down) / monitor (left/right). If there's

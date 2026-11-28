@@ -304,7 +304,7 @@ final class StackingLayout {
     ///
     /// One scale factor does it: normalise the surviving weights so they
     /// sum to exactly 1. `resolveRect` renders lane `i` at
-    /// `w_i / max(1, total)`, so a total of 1 means the strip starts at the
+    /// `w_i / renderedTotal(total)`, so a total of 1 means the strip starts at the
     /// left edge and ends at the right one.
     ///
     /// This deliberately overrides fit-or-center ON CLOSE. Opening columns
@@ -420,7 +420,7 @@ final class StackingLayout {
         var weights: [CGFloat] = (0 ..< shape.lanes).map { laneWeight(lane: $0) }
         let othersTotal = others.reduce(0.0) { $0 + weights[$1] }
         let othersTarget = cell.stripTotal.map { $0 - cell.laneWeight }
-            ?? (othersTotal >= 1 - 1e-6 ? 1 - cell.laneWeight : othersTotal)
+            ?? (othersTotal >= Self.fillThreshold - 1e-6 ? 1 - cell.laneWeight : othersTotal)
         if othersTotal > 0, othersTarget > 0 {
             for l in others { weights[l] *= othersTarget / othersTotal }
         }
@@ -817,8 +817,23 @@ final class StackingLayout {
     /// proportionally: one full-width terminal + a new one → 50/50.
     static func widthForNewColumn(natural: CGFloat, existing: [CGFloat]) -> CGFloat {
         let total = existing.reduce(0, +)
-        guard !existing.isEmpty, total >= 1 - 1e-6 else { return natural }
+        guard !existing.isEmpty, total >= fillThreshold - 1e-6 else { return natural }
         return total / CGFloat(existing.count)
+    }
+
+    /// mur — A STRIP USING 75% OF THE SCREEN FILLS IT. Below this share of
+    /// the lane axis the used columns render at their own widths, centred
+    /// (fit-or-center); at or above it they scale up to cover the axis edge
+    /// to edge, so a nearly-full strip doesn't leave two thin margins. It
+    /// is decided at render time from the stored weights, which aren't
+    /// touched: close or narrow a column and the strip centres again.
+    static let fillThreshold: CGFloat = 0.75
+
+    /// What the used columns' weights are divided by to give the fraction of
+    /// the lane axis each renders at: `total` once it reaches
+    /// `fillThreshold` (fill, or shrink to fit), else 1 (natural widths).
+    static func renderedTotal(_ total: CGFloat) -> CGFloat {
+        total >= fillThreshold - 1e-9 ? total : 1
     }
 
     // MARK: Moved windows keep their size
@@ -1000,9 +1015,10 @@ extension StackingLayout {
     ///
     /// mur — fit-or-center (naru-style, carousel disabled). Lane weights are
     /// absolute fractions of the lane-axis extent. If the used columns'
-    /// desired total ≤ 1 the strip renders at those widths and is CENTERED;
-    /// if it exceeds 1 the columns shrink by a shared factor to fill
-    /// (`max(1, total)` unifies both).
+    /// desired total is below `fillThreshold` (0.75) the strip renders at
+    /// those widths and is CENTERED; from there on the columns scale by a
+    /// shared factor to FILL the axis — up when the total is under 1, down
+    /// when it's over (`renderedTotal`).
     ///
     /// mur — MINIMUM SIZES WIN. A column holding a window that can't go
     /// narrower (`minimumSizes`) is widened to that minimum, and the room
@@ -1015,7 +1031,7 @@ extension StackingLayout {
         let totalLaneGap = max(0, CGFloat(used.count - 1)) * innerGap
         let usable = laneAxisFull - totalLaneGap
         let weights = used.map { laneWeight(lane: $0) }
-        let scale = usable / max(1.0, weights.reduce(0, +))
+        let scale = usable / Self.renderedTotal(weights.reduce(0, +))
         let base = weights.map { $0 * scale }
         let landscape = shape.orientation == .landscape
         let mins = used.map { lane in

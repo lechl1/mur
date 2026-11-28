@@ -96,6 +96,7 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
                 )
                 if let result = StackingResize.snap(sample) {
                     moveSizeMemory.forget() // new sizes: a later move keeps these
+                    joinedColumnMemory.forget()
                     if let lane = result.slotLane, let w = result.slotWeights {
                         workspace.stackingLayout.setSlotWeights(lane: lane, weights: w)
                     }

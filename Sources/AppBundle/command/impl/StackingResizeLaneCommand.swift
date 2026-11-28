@@ -54,6 +54,7 @@ struct StackingResizeLaneCommand: Command {
         }
         // The user picks new sizes: a later move keeps these (`MoveSizeMemory`).
         moveSizeMemory.forget()
+        joinedColumnMemory.forget()
 
         StackingResize.resizeLaneWidth(layout: layout, lane: current.lane0, signum: args.delta.val.signum)
         // The window doesn't move; the HUD re-reads the lane weights.

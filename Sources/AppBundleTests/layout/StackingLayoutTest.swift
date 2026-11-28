@@ -183,12 +183,12 @@ struct StackingLayoutTest {
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: TileSpan(lane0: 0, lane1: 1, slot0: 0, slot1: 0))
         let r = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
-        // Two USED lanes at the default width (0.4 each → total 0.8 < 1 →
-        // centered). Span covers both → 0.8 * 900 = 720 px wide, centered
-        // (offset 90), full 600 px height.
-        #expect(r?.width == 720)
+        // Two USED lanes at the default width (0.4 each → total 0.8, past
+        // the 0.75 fill threshold → they fill). Span covers both → the whole
+        // 900 px, full 600 px height.
+        #expect(r?.width == 900)
         #expect(r?.height == 600)
-        #expect(r?.topLeftX == 90)
+        #expect(r?.topLeftX == 0)
     }
 
     @Test func multiLaneSpanWithThirdLaneSibling() {
@@ -375,18 +375,18 @@ struct StackingLayoutTest {
         #expect(abs((r?.height ?? 0) - 600) < 0.001)              // slot axis still fills height
     }
 
-    @Test func twoDefaultColumnsCenterWithGap() {
+    @Test func twoDefaultColumnsFillTheScreen() {
         let layout = StackingLayout(shape: .landscapeDefault)
         layout.place(1, at: .soleSlot(lane: 0))
         layout.place(2, at: .soleSlot(lane: 1))
-        // Two default (0.4) columns → total 0.8 < 1 → group centered with a
-        // 90 px gap on each side (they do NOT stretch to fill).
+        // Two default (0.4) columns → total 0.8 ≥ 0.75 → they stretch to
+        // fill, edge to edge, instead of centring with 90 px either side.
         let r0 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
         let r1 = layout.resolveRect(for: 2, in: landscapeAvail, innerGap: 0)
-        #expect(abs((r0?.width ?? 0) - 360) < 0.001)              // 0.4 * 900
-        #expect(abs((r1?.width ?? 0) - 360) < 0.001)
-        #expect(abs((r0?.topLeftX ?? -1) - 90) < 0.001)          // (900 - 720)/2
-        #expect(abs((r1?.topLeftX ?? -1) - 450) < 0.001)         // 90 + 360
+        #expect(abs((r0?.width ?? 0) - 450) < 0.001)
+        #expect(abs((r1?.width ?? 0) - 450) < 0.001)
+        #expect(abs((r0?.topLeftX ?? -1) - 0) < 0.001)
+        #expect(abs((r1?.topLeftX ?? -1) - 450) < 0.001)
     }
 
     @Test func twoNarrowColumnsCenterAsGroupLandscape() {
@@ -479,7 +479,9 @@ struct StackingLayoutTest {
         layout.place(3, at: .soleSlot(lane: 1))
         layout.remove(2)
         let r0 = layout.resolveRect(for: 1, in: landscapeAvail, innerGap: 0)
-        #expect(abs((r0?.width ?? 0) - 360) < 0.001)      // 0.4 * 900, unchanged
+        // 0.4 + 0.4 fills: 450 each, as before the close.
+        #expect(abs((r0?.width ?? 0) - 450) < 0.001)
+        #expect(abs(layout.laneWeight(lane: 0) - 0.4) < 0.001)
         #expect(abs(layout.laneWeight(lane: 1) - 0.4) < 0.001)
     }
 
