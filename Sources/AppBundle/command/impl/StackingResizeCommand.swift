@@ -58,6 +58,8 @@ struct StackingResizeCommand: Command {
             io.err("window \(window.windowId) is not in the grid (use stacking-place to add it)")
             return .fail
         }
+        // The user picks new sizes: a later move keeps these (`MoveSizeMemory`).
+        moveSizeMemory.forget()
 
         let shape = layout.shape
         let isLaneAxis: Bool

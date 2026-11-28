@@ -40,7 +40,8 @@ private func crossWorkspaceOrMonitorFallback(
             }
     }
     guard let dest, dest != sourceWorkspace else { return false }
-    let sourceRect = gridRect(of: window, in: sourceWorkspace) ?? window.lastAppliedLayoutPhysicalRect
+    // Its own column on `dest`: the size it had when this run of moves began.
+    let sourceRect = startMove(of: window, renderedAt: gridRect(of: window, in: sourceWorkspace) ?? window.lastAppliedLayoutPhysicalRect)
     _ = moveWindowToWorkspace(
         window, dest, io,
         focusFollowsWindow: true, failIfNoop: false,
@@ -132,6 +133,10 @@ struct StackingMoveCommand: Command {
             return .fail
         }
 
+        // Every move, on either axis, is a move start: it makes this the
+        // window whose size is remembered (`MoveSizeMemory`).
+        let rememberedRect = startMove(of: window, renderedAt: gridRect(of: window, in: workspace))
+
         let shape = layout.shape
         let isLaneAxis: Bool
         let signum: Int
@@ -163,14 +168,14 @@ struct StackingMoveCommand: Command {
 
             if hasLaneMates {
                 // >1 window in the source column → extract into a new column.
-                // It keeps the width it had; the others shrink to make room.
-                let sourceRect = gridRect(of: window, in: workspace)
+                // Alone in its new column, it gets back the width it had
+                // when this run of moves began; the others shrink to make room.
                 let insertIdx = signum > 0 ? myLane + 1 : myLane
                 layout.insertLane(at: insertIdx)
                 layout.place(window.windowId, at: TileSpan(
                     lane0: insertIdx, lane1: insertIdx, slot0: 0, slot1: 0,
                 ))
-                keepColumnWidth(of: window, in: workspace, sourceRect: sourceRect)
+                keepColumnWidth(of: window, in: workspace, sourceRect: rememberedRect)
             } else if neighborVisIdx >= 0 && neighborVisIdx < used.count {
                 // Lone window + an adjacent column → merge as a new row,
                 // inserted at the slot matching the window's current

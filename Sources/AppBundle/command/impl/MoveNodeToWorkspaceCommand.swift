@@ -49,8 +49,9 @@ func moveWindowToWorkspace(
         }
     }
     // Read before the window leaves its grid; callers that took it out
-    // themselves pass it.
-    let sourceRect = sourceRect ?? window.nodeWorkspace.flatMap { gridRect(of: window, in: $0) }
+    // themselves pass it. Its column of its own there gets the size it had
+    // when this run of moves began (`MoveSizeMemory`).
+    let sourceRect = startMove(of: window, renderedAt: sourceRect ?? window.nodeWorkspace.flatMap { gridRect(of: window, in: $0) })
     _ = window.nodeWorkspace?.stackingLayout.remove(window.windowId)
     let targetContainer: NonLeafTreeNodeObject = window.isFloating ? targetWorkspace : targetWorkspace.rootTilingContainer
     window.bind(to: targetContainer, adaptiveWeight: WEIGHT_AUTO, index: index)

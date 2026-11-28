@@ -28,6 +28,7 @@ func setUpWorkspacesForTests() {
     explicitlyFloatingWindowIds = []
     ghostWindowIds = []
     focusStack = FocusStack()
+    moveSizeMemory = MoveSizeMemory()
 
     for workspace in Workspace.all {
         for child in workspace.children {

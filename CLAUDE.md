@@ -113,6 +113,18 @@ tree like i3/sway. This is a core design invariant: keep it that way.
     equal share** (`keepSlotShare`), so a window that filled its old column
     doesn't squash its new column mates. Extracted into a new column, it
     keeps its rendered width and the others shrink (`keepColumnWidth`).
+  - **Back in a column of its own, it gets back the size it had when the
+    move began** (`MoveSizeMemory`). One window is remembered at a time:
+    its first move (`stacking-move` on either axis, `move-node-to-*`, a
+    drop) records the size it rendered at, its later moves keep that size,
+    and another window's move replaces it. So a 600pt column merged into a
+    400pt one as a row, then pulled out again (`keepColumnWidth`) or sent to
+    another workspace (`mountInOwnColumn`), is 600pt again, the others
+    shrinking in proportion as above. Without it the window came out at the
+    width of the column it had passed through. Joining a column as a row
+    still uses its current height. A resize (`stacking-resize`,
+    `stacking-resize-lane`, a mouse resize) forgets it: those are the
+    sizes the user wants now.
 
 - **The rows fill the column** (the widths fill the row in portrait).
   `slotExtents` shares the slot axis by slot weight, but pins a row whose

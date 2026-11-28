@@ -48,6 +48,7 @@ func commitStackingDrop(_ session: StackingDragSession) {
     if let cell = session.hoverCell, !window.isFloating {
         let layout = target.stackingLayout
         let sourceRect = gridRect(of: window, in: target)
+        _ = startMove(of: window, renderedAt: sourceRect) // a move start (`MoveSizeMemory`)
         let changesColumn = layout.placements[window.windowId]?.lane0 != cell.lane
         layout.place(window.windowId, at: .single(lane: cell.lane, slot: cell.slot))
         // Into another column: it keeps its height, at most an equal share.
