@@ -19,15 +19,28 @@ final class MacWindow: Window {
     static func getOrRegister(windowId: UInt32, macApp: MacApp) async throws -> MacWindow {
         if let existing = allWindowsMap[windowId] { return existing }
         let rect = try await macApp.getAxRect(windowId)
-        let workspace: Workspace = if isStartup {
-            (rect?.center.monitorApproximation ?? mainMonitor).activeWorkspace
+        let workspace: Workspace
+        let why: String
+        if isStartup {
+            workspace = (rect?.center.monitorApproximation ?? mainMonitor).activeWorkspace
+            why = "startup"
         } else if let back = await workspaceOfRelaunchedApp(macApp, windowId: windowId) {
             // mur — an app that just quit and reopened (a depot update):
             // back on the workspace it was on.
-            back
-        } else {
+            workspace = back
+            why = "relaunched app's ghost"
+        } else if let parent = workspaceOfParentProcess(of: macApp.pid) {
             // mur — on the workspace of the process that started it.
-            workspaceOfParentProcess(of: macApp.pid) ?? focus.workspace
+            workspace = parent
+            why = "parent process"
+        } else {
+            workspace = focus.workspace
+            why = "focused"
+        }
+        // mur — where a new window went and why, for the "it opened on the
+        // wrong workspace" reports: asking mur afterwards can't tell.
+        if !isStartup {
+            fputs("mur: \(Date.now.formatted(.iso8601)) window \(windowId) (\(macApp.rawAppBundleId ?? "?")) opened on \(workspace.name): \(why)\n", stderr)
         }
         let data = try await unbindAndGetBindingDataForNewWindow(windowId, macApp, workspace, window: nil)
 

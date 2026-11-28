@@ -43,5 +43,8 @@ func workspaceOfRelaunchedApp(_ macApp: MacApp, windowId: UInt32) async -> Works
         title: normalizedSessionTitle(raw) ?? raw,
         isPlaced: { id in Workspace.all.contains { $0.stackingLayout.placements[id] != nil } },
     )
+    if name == nil {
+        fputs("mur: \(appId) relaunched, but no ghost names a workspace for window \(windowId) titled \"\(raw)\"\n", stderr)
+    }
     return name.map { Workspace.get(byName: $0) }
 }
